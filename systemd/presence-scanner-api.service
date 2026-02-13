@@ -1,0 +1,15 @@
+[Unit]
+Description=Presence Scanner API
+After=network.target
+
+[Service]
+Type=simple
+User=sam1902
+Group=sam1902
+WorkingDirectory=/home/sam1902/projects/presence-scanner
+ExecStart=/usr/local/bin/uv run --script /home/sam1902/projects/presence-scanner/api.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

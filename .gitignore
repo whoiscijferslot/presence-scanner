@@ -1,0 +1,9 @@
+# UV cache
+.cache/
+.local/
+
+# Status file (generated)
+www/status.json
+
+# Backups
+*.backup.*

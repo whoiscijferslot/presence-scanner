@@ -1,0 +1,10 @@
+[Unit]
+Description=Run presence scanner every minute
+
+[Timer]
+OnBootSec=10sec
+OnUnitActiveSec=1min
+AccuracySec=1sec
+
+[Install]
+WantedBy=timers.target
