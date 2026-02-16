@@ -7,6 +7,7 @@ from datetime import datetime
 from loguru import logger
 
 from .config import settings
+from .models import DeviceData, DeviceState, PresenceData, ValouStatusHistory
 
 
 @dataclass
@@ -80,7 +81,7 @@ def init_db() -> None:
         conn.close()
 
 
-def get_device_state(device_id: str) -> dict[str, bool | str | None] | None:
+def get_device_state(device_id: str) -> DeviceState | None:
     """Get current state of a device from database."""
     conn = get_connection()
     try:
@@ -89,14 +90,13 @@ def get_device_state(device_id: str) -> dict[str, bool | str | None] | None:
             (device_id,),
         ).fetchone()
         if row:
-            return {"present": bool(row["present"]), "last_online": row["last_online"]}
+            return DeviceState(
+                present=bool(row["present"]),
+                last_online=row["last_online"],
+            )
         return None
     finally:
         conn.close()
-
-
-DevicesDict = dict[str, dict[str, str | bool | None]]
-PresenceData = dict[str, str | DevicesDict | None]
 
 
 def get_all_device_states() -> PresenceData:
@@ -108,21 +108,21 @@ def get_all_device_states() -> PresenceData:
         ).fetchone()
         scan_time: str | None = row["scan_time"] if row else None
 
-        devices: DevicesDict = {}
+        devices: dict[str, DeviceData] = {}
         for row in conn.execute("SELECT * FROM devices"):
             device_id: str = row["device_id"]
-            devices[device_id] = {
-                "name": row["name"],
-                "present": bool(row["present"]),
-                "last_online": row["last_online"],
-                "last_online_human": format_time_human(row["last_online"]),
-            }
+            devices[device_id] = DeviceData(
+                name=row["name"],
+                present=bool(row["present"]),
+                last_online=row["last_online"],
+                last_online_human=format_time_human(row["last_online"]),
+            )
 
-        return {
-            "scan_time": scan_time,
-            "scan_time_human": format_time_human(scan_time),
-            "devices": devices,
-        }
+        return PresenceData(
+            scan_time=scan_time,
+            scan_time_human=format_time_human(scan_time),
+            devices=devices,
+        )
     finally:
         conn.close()
 
@@ -164,7 +164,7 @@ def update_device_state(update: DeviceUpdate) -> None:
         conn.close()
 
 
-def get_valou_status_history() -> dict[str, str | None]:
+def get_valou_status_history() -> ValouStatusHistory:
     """Get the last known Roomie status."""
     conn = get_connection()
     try:
@@ -172,8 +172,8 @@ def get_valou_status_history() -> dict[str, str | None]:
             "SELECT status, since FROM valou_status WHERE id = 1"
         ).fetchone()
         if row:
-            return {"status": row["status"], "since": row["since"]}
-        return {"status": None, "since": None}
+            return ValouStatusHistory(status=row["status"], since=row["since"])
+        return ValouStatusHistory(status=None, since=None)
     finally:
         conn.close()
 

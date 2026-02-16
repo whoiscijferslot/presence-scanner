@@ -104,38 +104,26 @@ async def valou_status(
     """Get enhanced Roomie status based on presence + room lights."""
     presence_data = get_all_device_states()
 
-    devices = presence_data.get("devices")
-    if not devices or not isinstance(devices, dict):
-        raise HTTPException(status_code=500, detail="No presence data")
-
-    roomie = devices.get("roomie", {})
-    if not isinstance(roomie, dict):
+    roomie = presence_data.devices.get("roomie")
+    if not roomie:
         raise HTTPException(status_code=500, detail="Roomie data missing")
 
-    present = bool(roomie.get("present", False))
-    last_online = roomie.get("last_online")
-    last_online_str = str(last_online) if last_online else None
-
     enhanced = await hue_service.get_enhanced_valou_status(
-        is_present=present,
-        last_online=last_online_str,
+        is_present=roomie.present,
+        last_online=roomie.last_online,
     )
 
     return ValouStatusResponse(
-        status=enhanced["enhanced_status"],  # type: ignore[arg-type]
-        label=str(enhanced["enhanced_label"]),
-        present=present,
-        last_online=last_online_str,
-        minutes_away=float(enhanced["minutes_away"])
-        if enhanced["minutes_away"] is not None
-        else None,
-        living_room_on=bool(enhanced["living_room_on"]),
-        valou_room_on=bool(enhanced["valou_room_on"]),
-        since=str(enhanced["since"]) if enhanced["since"] else None,
-        since_minutes=int(enhanced["since_minutes"])
-        if enhanced["since_minutes"] is not None
-        else None,
-        since_human=str(enhanced["since_human"]) if enhanced["since_human"] else None,
+        status=enhanced.enhanced_status,
+        label=enhanced.enhanced_label,
+        present=roomie.present,
+        last_online=roomie.last_online,
+        minutes_away=enhanced.minutes_away,
+        living_room_on=enhanced.living_room_on,
+        valou_room_on=enhanced.valou_room_on,
+        since=enhanced.since,
+        since_minutes=enhanced.since_minutes,
+        since_human=enhanced.since_human,
     )
 
 
@@ -146,69 +134,43 @@ async def full_status(
     """Get full presence status for all devices + enhanced Roomie status."""
     presence_data = get_all_device_states()
 
-    raw_devices = presence_data.get("devices")
-    if not raw_devices or not isinstance(raw_devices, dict):
-        raise HTTPException(status_code=500, detail="No presence data")
-
-    valou_raw = raw_devices.get("roomie", {})
-    if not isinstance(valou_raw, dict):
+    roomie = presence_data.devices.get("roomie")
+    if not roomie:
         raise HTTPException(status_code=500, detail="Roomie data missing")
 
-    present = bool(valou_raw.get("present", False))
-    last_online = valou_raw.get("last_online")
-    last_online_str = str(last_online) if last_online else None
-
     enhanced = await hue_service.get_enhanced_valou_status(
-        is_present=present,
-        last_online=last_online_str,
+        is_present=roomie.present,
+        last_online=roomie.last_online,
     )
 
     devices: dict[str, DeviceStatus | ValouEnhancedStatus] = {}
 
-    for device_id, device_data in raw_devices.items():
-        if not isinstance(device_data, dict):
-            continue
-
+    for device_id, device_data in presence_data.devices.items():
         if device_id == "roomie":
             devices[device_id] = ValouEnhancedStatus(
-                name=str(device_data.get("name", "")),
-                present=bool(device_data.get("present", False)),
-                last_online=str(device_data.get("last_online"))
-                if device_data.get("last_online")
-                else None,
-                last_online_human=str(device_data.get("last_online_human"))
-                if device_data.get("last_online_human")
-                else None,
-                enhanced_status=enhanced["enhanced_status"],  # type: ignore[arg-type]
-                enhanced_label=str(enhanced["enhanced_label"]),
-                living_room_on=bool(enhanced["living_room_on"]),
-                valou_room_on=bool(enhanced["valou_room_on"]),
-                since=str(enhanced["since"]) if enhanced["since"] else None,
-                since_minutes=int(enhanced["since_minutes"])
-                if enhanced["since_minutes"] is not None
-                else None,
-                since_human=str(enhanced["since_human"])
-                if enhanced["since_human"]
-                else None,
+                name=device_data.name,
+                present=device_data.present,
+                last_online=device_data.last_online,
+                last_online_human=device_data.last_online_human,
+                enhanced_status=enhanced.enhanced_status,
+                enhanced_label=enhanced.enhanced_label,
+                living_room_on=enhanced.living_room_on,
+                valou_room_on=enhanced.valou_room_on,
+                since=enhanced.since,
+                since_minutes=enhanced.since_minutes,
+                since_human=enhanced.since_human,
             )
         else:
             devices[device_id] = DeviceStatus(
-                name=str(device_data.get("name", "")),
-                present=bool(device_data.get("present", False)),
-                last_online=str(device_data.get("last_online"))
-                if device_data.get("last_online")
-                else None,
-                last_online_human=str(device_data.get("last_online_human"))
-                if device_data.get("last_online_human")
-                else None,
+                name=device_data.name,
+                present=device_data.present,
+                last_online=device_data.last_online,
+                last_online_human=device_data.last_online_human,
             )
 
-    scan_time = presence_data.get("scan_time")
-    scan_time_human = presence_data.get("scan_time_human")
-
     return PresenceResponse(
-        scan_time=str(scan_time) if scan_time else None,
-        scan_time_human=str(scan_time_human) if scan_time_human else None,
+        scan_time=presence_data.scan_time,
+        scan_time_human=presence_data.scan_time_human,
         devices=devices,
     )
 

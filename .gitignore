@@ -15,3 +15,6 @@ build/
 .idea/
 .vscode/
 *.swp
+
+# Database (runtime state)
+presence.db

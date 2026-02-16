@@ -8,6 +8,7 @@ from loguru import logger
 
 from .config import settings
 from .database import DeviceUpdate, get_device_state, update_device_state
+from .models import DeviceState
 
 # Full paths for security
 SUDO_PATH = "/usr/bin/sudo"
@@ -97,9 +98,9 @@ async def run_scan() -> dict[str, bool]:
 
     Returns dict of device_id -> is_present.
     """
-    previous_state = {
-        device_id: get_device_state(device_id)
-        or {"present": False, "last_online": None}
+    default_state = DeviceState(present=False, last_online=None)
+    previous_state: dict[str, DeviceState] = {
+        device_id: get_device_state(device_id) or default_state
         for device_id in settings.devices
     }
 
@@ -112,7 +113,7 @@ async def run_scan() -> dict[str, bool]:
 
     needs_confirmation: list[tuple[str, bool, str]] = []
     for device_id, is_present in presence.items():
-        was_present = bool(previous_state[device_id]["present"])
+        was_present = previous_state[device_id].present
 
         if is_present != was_present:
             transition = "appeared" if is_present else "disappeared"
@@ -135,7 +136,7 @@ async def run_scan() -> dict[str, bool]:
                 logger.info(f"  {device_name} {transition} CONFIRMED by MAC")
                 presence[device_id] = expected_present
             else:
-                prev_present = bool(previous_state[device_id]["present"])
+                prev_present = previous_state[device_id].present
                 state_str = "ONLINE" if prev_present else "OFFLINE"
                 logger.info(
                     f"  {device_name} {transition} NOT confirmed (fluke), "
@@ -148,7 +149,7 @@ async def run_scan() -> dict[str, bool]:
 
     for device_id, device in settings.devices.items():
         is_present = presence[device_id]
-        last_online = str(previous_state[device_id]["last_online"] or "")
+        last_online = previous_state[device_id].last_online
 
         if is_present:
             last_online = scan_time_iso
@@ -160,7 +161,7 @@ async def run_scan() -> dict[str, bool]:
                 ip=device.ip,
                 mac=device.mac,
                 present=is_present,
-                last_online=last_online or None,
+                last_online=last_online,
                 scan_time=scan_time_iso,
             )
         )
