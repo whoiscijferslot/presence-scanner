@@ -4,12 +4,15 @@ After=network.target
 
 [Service]
 Type=simple
-User=sam1902
+User=presence
+Group=presence
 WorkingDirectory=/home/sam1902/projects/presence-scanner
 ExecStart=/usr/local/bin/uv run python -m presence_scanner.app
 Restart=always
 RestartSec=5
 Environment=PYTHONUNBUFFERED=1
+Environment=HOME=/var/lib/presence-scanner
+Environment=UV_CACHE_DIR=/var/lib/presence-scanner/.cache/uv
 
 [Install]
 WantedBy=multi-user.target

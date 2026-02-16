@@ -34,7 +34,8 @@ DEVICES: dict[str, DeviceConfig] = {
 
 # Hue integration
 HUE_BRIDGE_IP = "192.168.1.103"
-HUE_TOKENS_FILE = Path.home() / ".config/bedwolf/hue-tokens.json"
+# Use sam1902's config (readable by presence user)
+HUE_TOKENS_FILE = Path("/home/sam1902/.config/bedwolf/hue-tokens.json")
 LIVING_ROOM_GROUP = "81"
 VALOU_ROOM_GROUP = "84"
 
