@@ -1,0 +1,29 @@
+# Prek configuration
+# https://github.com/cloudflare/prek
+
+[[repos]]
+repo = "local"
+
+[[repos.hooks]]
+id = "ruff-check"
+name = "ruff check"
+entry = "uv run ruff check --fix"
+language = "system"
+types = ["python"]
+pass_filenames = true
+
+[[repos.hooks]]
+id = "ruff-format"
+name = "ruff format"
+entry = "uv run ruff format"
+language = "system"
+types = ["python"]
+pass_filenames = true
+
+[[repos.hooks]]
+id = "ty"
+name = "ty check"
+entry = "ty check"
+language = "system"
+types = ["python"]
+pass_filenames = false

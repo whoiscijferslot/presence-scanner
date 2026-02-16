@@ -578,7 +578,7 @@
             scanCooldown = true;
 
             try {
-                const response = await fetch('/api/scan', { method: 'POST' });
+                const response = await fetch('api/scan', { method: 'POST' });
                 const result = await response.json();
 
                 if (response.status === 429) {
