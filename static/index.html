@@ -323,6 +323,12 @@
             margin: 20px 0;
         }
 
+        .button-row {
+            display: flex;
+            gap: 10px;
+            margin-top: 15px;
+        }
+
         .scan-button {
             background: transparent;
             border: 1px solid var(--green-dim);
@@ -332,7 +338,6 @@
             padding: 8px 16px;
             cursor: pointer;
             transition: all 0.2s ease;
-            margin-top: 15px;
         }
         .scan-button:hover:not(:disabled) {
             background: rgba(0, 255, 0, 0.1);
@@ -539,9 +544,14 @@
                     <p>▸ Network: 192.168.1.0/24</p>
                     <p>▸ Scan interval: 60 seconds</p>
                     <p>▸ Next refresh: <span id="countdown">60</span>s</p>
-                    <button id="scan-btn" class="scan-button" onclick="triggerScan()">
-                        [ TRIGGER MANUAL SCAN ]
-                    </button>
+                    <div class="button-row">
+                        <button id="refresh-btn" class="scan-button" onclick="refreshNow()">
+                            [ ↻ REFRESH ]
+                        </button>
+                        <button id="scan-btn" class="scan-button" onclick="triggerScan()">
+                            [ TRIGGER SCAN ]
+                        </button>
+                    </div>
                 </div>
             `;
 
@@ -602,9 +612,22 @@
             const btn = document.getElementById('scan-btn');
             if (btn) {
                 btn.disabled = false;
-                btn.textContent = '[ TRIGGER MANUAL SCAN ]';
+                btn.textContent = '[ TRIGGER SCAN ]';
             }
             scanCooldown = false;
+        }
+
+        async function refreshNow() {
+            const btn = document.getElementById('refresh-btn');
+            if (btn) {
+                btn.disabled = true;
+                btn.textContent = '[ ↻ ... ]';
+            }
+            await fetchStatus();
+            if (btn) {
+                btn.disabled = false;
+                btn.textContent = '[ ↻ REFRESH ]';
+            }
         }
 
         // Initial fetch
