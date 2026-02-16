@@ -1,87 +1,88 @@
-#!/usr/bin/env -S uv run --script
-# /// script
-# requires-python = ">=3.12"
-# dependencies = [
-#   "starlette==0.45.3",
-#   "uvicorn==0.34.0",
-#   "httpx==0.28.1",
-# ]
-# ///
-"""Presence Scanner API - HTTP endpoint to trigger manual scans and get enhanced status."""
+"""FastAPI application for presence scanner."""
 
 import asyncio
 import json
-import sqlite3
 import time
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
 
 import httpx
-from starlette.applications import Starlette
-from starlette.responses import JSONResponse
-from starlette.routing import Route
+from fastapi import FastAPI, BackgroundTasks
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
+from loguru import logger
 
-DEBOUNCE_SECONDS = 5
+from .config import (
+    DEVICES,
+    HUE_BRIDGE_IP,
+    HUE_TOKENS_FILE,
+    LIVING_ROOM_GROUP,
+    SCAN_INTERVAL,
+    VALOU_ROOM_GROUP,
+)
+from .database import (
+    get_all_device_states,
+    get_valou_status_history,
+    init_db,
+    save_valou_status_history,
+)
+from .scanner import run_scan
+
+# Debounce for manual scan trigger
+TRIGGER_DEBOUNCE = 5
 last_trigger_time = 0.0
 
-# Paths
-DB_FILE = Path("/home/sam1902/projects/presence-scanner/presence.db")
-HUE_TOKENS_FILE = Path.home() / ".config/bedwolf/hue-tokens.json"
-HUE_BRIDGE_IP = "192.168.1.103"
-
-# Hue room group IDs
-LIVING_ROOM_GROUP = "81"
-VALOU_ROOM_GROUP = "84"
+# Background scanner task
+scanner_task: asyncio.Task | None = None
 
 
-def get_db_connection() -> sqlite3.Connection:
-    """Get a database connection with row factory."""
-    conn = sqlite3.connect(DB_FILE)
-    conn.row_factory = sqlite3.Row
-    return conn
+async def background_scanner():
+    """Background task that runs scans periodically."""
+    while True:
+        try:
+            await run_scan()
+        except Exception as e:
+            logger.error(f"Scan failed: {e}")
+        await asyncio.sleep(SCAN_INTERVAL)
 
 
-def load_presence_data() -> dict:
-    """Load presence data from SQLite database."""
-    conn = get_db_connection()
-    try:
-        # Get the most recent update time
-        row = conn.execute(
-            "SELECT MAX(updated_at) as scan_time FROM devices"
-        ).fetchone()
-        scan_time = row["scan_time"] if row else None
-        
-        # Get all devices
-        devices = {}
-        for row in conn.execute("SELECT * FROM devices"):
-            device_id = row["device_id"]
-            devices[device_id] = {
-                "name": row["name"],
-                "present": bool(row["present"]),
-                "last_online": row["last_online"],
-                "last_online_human": format_time_human(row["last_online"]) if row["last_online"] else None,
-            }
-        
-        return {
-            "scan_time": scan_time,
-            "scan_time_human": format_time_human(scan_time) if scan_time else None,
-            "devices": devices,
-        }
-    finally:
-        conn.close()
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Startup and shutdown events."""
+    global scanner_task
+    
+    # Initialize database
+    init_db()
+    logger.info("Database initialized")
+    
+    # Start background scanner
+    scanner_task = asyncio.create_task(background_scanner())
+    logger.info(f"Background scanner started (interval: {SCAN_INTERVAL}s)")
+    
+    yield
+    
+    # Shutdown
+    if scanner_task:
+        scanner_task.cancel()
+        try:
+            await scanner_task
+        except asyncio.CancelledError:
+            pass
+    logger.info("Scanner stopped")
 
 
-def format_time_human(iso_time: str | None) -> str | None:
-    """Convert ISO time to human readable format."""
-    if not iso_time:
-        return None
-    try:
-        dt = datetime.fromisoformat(iso_time.replace("Z", "+00:00"))
-        return dt.strftime("%Y-%m-%d %H:%M:%S UTC")
-    except Exception:
-        return iso_time
+app = FastAPI(
+    title="Presence Scanner",
+    version="2.0.0",
+    lifespan=lifespan,
+)
 
+
+# --------------------------------------------------------------------------
+# Hue integration helpers
+# --------------------------------------------------------------------------
 
 def load_hue_username() -> str | None:
     """Load Hue API username from bedwolf config."""
@@ -91,46 +92,6 @@ def load_hue_username() -> str | None:
             return data.get("username")
     except (FileNotFoundError, json.JSONDecodeError):
         return None
-
-
-def load_valou_status_history() -> dict:
-    """Load the last known Roomie status from database."""
-    conn = get_db_connection()
-    try:
-        # Store roomie status in a separate table
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS valou_status (
-                id INTEGER PRIMARY KEY CHECK (id = 1),
-                status TEXT,
-                since TEXT
-            )
-        """)
-        row = conn.execute("SELECT status, since FROM valou_status WHERE id = 1").fetchone()
-        if row:
-            return {"status": row["status"], "since": row["since"]}
-        return {"status": None, "since": None}
-    finally:
-        conn.close()
-
-
-def save_valou_status_history(status: str, since: str) -> None:
-    """Save the current Roomie status to database."""
-    conn = get_db_connection()
-    try:
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS valou_status (
-                id INTEGER PRIMARY KEY CHECK (id = 1),
-                status TEXT,
-                since TEXT
-            )
-        """)
-        conn.execute("""
-            INSERT INTO valou_status (id, status, since) VALUES (1, ?, ?)
-            ON CONFLICT(id) DO UPDATE SET status = excluded.status, since = excluded.since
-        """, (status, since))
-        conn.commit()
-    finally:
-        conn.close()
 
 
 async def get_room_state(client: httpx.AsyncClient, username: str, group_id: str) -> bool:
@@ -155,12 +116,7 @@ def determine_valou_status(
     living_room_on: bool,
     valou_room_on: bool
 ) -> tuple[ValouStatus, str]:
-    """
-    Determine Roomie's status based on presence and room lights.
-    
-    Returns (status, label) tuple.
-    """
-    # Consider "at home" if detected OR away for less than 5 minutes
+    """Determine Roomie's status based on presence and room lights."""
     is_effectively_home = present or minutes_away < 5
 
     if not is_effectively_home:
@@ -172,46 +128,40 @@ def determine_valou_status(
     elif not living_room_on and valou_room_on:
         return "awake", "Awake"
     else:
-        # Both off
         return "sleeping", "Sleeping"
 
 
-async def trigger_scan(request):
+# --------------------------------------------------------------------------
+# API Endpoints
+# --------------------------------------------------------------------------
+
+@app.post("/api/scan")
+async def trigger_scan(background_tasks: BackgroundTasks):
     """Trigger a manual presence scan."""
     global last_trigger_time
     now = time.time()
     elapsed = now - last_trigger_time
 
-    if elapsed < DEBOUNCE_SECONDS:
+    if elapsed < TRIGGER_DEBOUNCE:
         return JSONResponse({
             "status": "debounced",
-            "retry_after": DEBOUNCE_SECONDS - elapsed
+            "retry_after": TRIGGER_DEBOUNCE - elapsed
         }, status_code=429)
 
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            "sudo", "systemctl", "start", "presence-scanner.service",
-            stderr=asyncio.subprocess.PIPE
-        )
-        await asyncio.wait_for(proc.communicate(), timeout=2.0)
-        last_trigger_time = now
-        return JSONResponse({"status": "triggered"})
-    except asyncio.TimeoutError:
-        last_trigger_time = now
-        return JSONResponse({"status": "triggered"})
-    except Exception as e:
-        return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
+    last_trigger_time = now
+    background_tasks.add_task(run_scan)
+    return {"status": "triggered"}
 
 
-async def valou_status(request):
+@app.get("/api/roomie-status")
+async def valou_status():
     """Get enhanced Roomie status based on presence + room lights."""
-    # Load presence data from database
-    try:
-        presence_data = load_presence_data()
-    except Exception as e:
-        return JSONResponse({"error": f"Presence data unavailable: {e}"}, status_code=500)
+    presence_data = get_all_device_states()
+    
+    if not presence_data.get("devices"):
+        return JSONResponse({"error": "No presence data"}, status_code=500)
 
-    roomie = presence_data.get("devices", {}).get("roomie", {})
+    roomie = presence_data["devices"].get("roomie", {})
     present = roomie.get("present", False)
     last_online = roomie.get("last_online")
     
@@ -238,35 +188,31 @@ async def valou_status(request):
             )
 
     # Determine status
+    now = datetime.now(timezone.utc)
     status, label = determine_valou_status(present, minutes_away, living_room_on, valou_room_on)
 
     # Track status changes
-    now = datetime.now(timezone.utc)
-    history = load_valou_status_history()
+    history = get_valou_status_history()
     
     if history.get("status") != status:
-        # Status changed, update the timestamp
         since_iso = now.isoformat().replace("+00:00", "Z")
         save_valou_status_history(status, since_iso)
         since = since_iso
     else:
         since = history.get("since")
     
-    # Calculate duration since status change
+    # Calculate duration
     since_minutes = None
     since_human = None
     if since:
         try:
             since_dt = datetime.fromisoformat(since.replace("Z", "+00:00"))
             since_minutes = (now - since_dt).total_seconds() / 60
-            # Format as HH:MM in local time (CET)
-            # For simplicity, add 1 hour for CET (this is approximate)
-            since_local = since_dt.replace(tzinfo=None)  # Remove tz for formatting
             since_human = since_dt.strftime("%H:%M")
         except Exception:
             pass
 
-    return JSONResponse({
+    return {
         "status": status,
         "label": label,
         "present": present,
@@ -277,18 +223,18 @@ async def valou_status(request):
         "since": since,
         "since_minutes": round(since_minutes) if since_minutes is not None else None,
         "since_human": since_human,
-    })
+    }
 
 
-async def full_status(request):
+@app.get("/api/status")
+async def full_status():
     """Get full presence status for all devices + enhanced Roomie status."""
-    # Load presence data from database
-    try:
-        presence_data = load_presence_data()
-    except Exception as e:
-        return JSONResponse({"error": f"Presence data unavailable: {e}"}, status_code=500)
+    presence_data = get_all_device_states()
+    
+    if not presence_data.get("devices"):
+        return JSONResponse({"error": "No presence data"}, status_code=500)
 
-    roomie = presence_data.get("devices", {}).get("roomie", {})
+    roomie = presence_data["devices"].get("roomie", {})
     present = roomie.get("present", False)
     last_online = roomie.get("last_online")
     
@@ -319,17 +265,16 @@ async def full_status(request):
     status, label = determine_valou_status(present, minutes_away, living_room_on, valou_room_on)
 
     # Track status changes
-    history = load_valou_status_history()
+    history = get_valou_status_history()
     
     if history.get("status") != status:
-        # Status changed, update the timestamp
         since_iso = now.isoformat().replace("+00:00", "Z")
         save_valou_status_history(status, since_iso)
         since = since_iso
     else:
         since = history.get("since")
     
-    # Calculate duration since status change
+    # Calculate duration
     since_minutes = None
     since_human = None
     if since:
@@ -350,15 +295,42 @@ async def full_status(request):
     response["devices"]["roomie"]["since_minutes"] = round(since_minutes) if since_minutes is not None else None
     response["devices"]["roomie"]["since_human"] = since_human
 
-    return JSONResponse(response)
+    return response
 
 
-app = Starlette(routes=[
-    Route("/scan", trigger_scan, methods=["POST"]),
-    Route("/roomie-status", valou_status, methods=["GET"]),
-    Route("/status", full_status, methods=["GET"]),
-])
+@app.get("/api/health")
+async def health():
+    """Health check endpoint."""
+    return {"status": "ok", "timestamp": datetime.now(timezone.utc).isoformat()}
+
+
+# --------------------------------------------------------------------------
+# Static files (HTML frontend)
+# --------------------------------------------------------------------------
+
+# Get the static directory path (relative to this file)
+STATIC_DIR = Path(__file__).parent.parent.parent / "static"
+
+
+@app.get("/")
+async def index():
+    """Serve the main HTML page."""
+    return FileResponse(STATIC_DIR / "index.html")
+
+
+# Mount static files for any additional assets
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+
+# --------------------------------------------------------------------------
+# Entry point
+# --------------------------------------------------------------------------
+
+def main():
+    """Run the server."""
+    import uvicorn
+    uvicorn.run(app, host="127.0.0.1", port=5031, log_level="info")
+
 
 if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="127.0.0.1", port=5031, log_level="warning")
+    main()

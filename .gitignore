@@ -8,3 +8,9 @@ www/status.json
 # Backups
 *.backup.*
 presence.db
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+dist/
+build/

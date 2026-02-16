@@ -1,11 +1,15 @@
 [Unit]
-Description=Network Presence Scanner
+Description=Presence Scanner
 After=network.target
 
 [Service]
-Type=oneshot
-ExecStart=/usr/local/bin/uv run --python 3.14 /home/sam1902/projects/presence-scanner/scan.py
-User=root
+Type=simple
+User=sam1902
+WorkingDirectory=/home/sam1902/projects/presence-scanner
+ExecStart=/usr/local/bin/uv run python -m presence_scanner.app
+Restart=always
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
 
 [Install]
 WantedBy=multi-user.target
