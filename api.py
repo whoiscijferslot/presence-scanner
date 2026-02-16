@@ -12,6 +12,7 @@
 import asyncio
 import json
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
 
@@ -25,6 +26,7 @@ last_trigger_time = 0.0
 
 # Paths
 STATUS_FILE = Path("/home/sam1902/projects/presence-scanner/www/status.json")
+VALOU_STATUS_FILE = Path("/home/sam1902/projects/presence-scanner/www/valou_status.json")
 HUE_TOKENS_FILE = Path.home() / ".config/bedwolf/hue-tokens.json"
 HUE_BRIDGE_IP = "192.168.1.103"
 
@@ -41,6 +43,23 @@ def load_hue_username() -> str | None:
             return data.get("username")
     except (FileNotFoundError, json.JSONDecodeError):
         return None
+
+
+def load_valou_status_history() -> dict:
+    """Load the last known Roomie status and when it changed."""
+    try:
+        with VALOU_STATUS_FILE.open() as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {"status": None, "since": None}
+
+
+def save_valou_status_history(status: str, since: str) -> None:
+    """Save the current Roomie status and timestamp."""
+    data = {"status": status, "since": since}
+    with VALOU_STATUS_FILE.open("w") as f:
+        json.dump(data, f, indent=2)
+    VALOU_STATUS_FILE.chmod(0o644)
 
 
 async def get_room_state(client: httpx.AsyncClient, username: str, group_id: str) -> bool:
@@ -130,7 +149,6 @@ async def valou_status(request):
     minutes_away = float("inf")
     if last_online:
         try:
-            from datetime import datetime, timezone
             last_online_dt = datetime.fromisoformat(last_online.replace("Z", "+00:00"))
             now = datetime.now(timezone.utc)
             minutes_away = (now - last_online_dt).total_seconds() / 60
@@ -152,6 +170,32 @@ async def valou_status(request):
     # Determine status
     status, label = determine_valou_status(present, minutes_away, living_room_on, valou_room_on)
 
+    # Track status changes
+    now = datetime.now(timezone.utc)
+    history = load_valou_status_history()
+    
+    if history.get("status") != status:
+        # Status changed, update the timestamp
+        since_iso = now.isoformat().replace("+00:00", "Z")
+        save_valou_status_history(status, since_iso)
+        since = since_iso
+    else:
+        since = history.get("since")
+    
+    # Calculate duration since status change
+    since_minutes = None
+    since_human = None
+    if since:
+        try:
+            since_dt = datetime.fromisoformat(since.replace("Z", "+00:00"))
+            since_minutes = (now - since_dt).total_seconds() / 60
+            # Format as HH:MM in local time (CET)
+            # For simplicity, add 1 hour for CET (this is approximate)
+            since_local = since_dt.replace(tzinfo=None)  # Remove tz for formatting
+            since_human = since_dt.strftime("%H:%M")
+        except Exception:
+            pass
+
     return JSONResponse({
         "status": status,
         "label": label,
@@ -160,6 +204,9 @@ async def valou_status(request):
         "minutes_away": minutes_away if minutes_away != float("inf") else None,
         "living_room_on": living_room_on,
         "valou_room_on": valou_room_on,
+        "since": since,
+        "since_minutes": round(since_minutes) if since_minutes is not None else None,
+        "since_human": since_human,
     })
 
 
@@ -180,7 +227,6 @@ async def full_status(request):
     minutes_away = float("inf")
     if last_online:
         try:
-            from datetime import datetime, timezone
             last_online_dt = datetime.fromisoformat(last_online.replace("Z", "+00:00"))
             now = datetime.now(timezone.utc)
             minutes_away = (now - last_online_dt).total_seconds() / 60
@@ -200,7 +246,30 @@ async def full_status(request):
             )
 
     # Determine Roomie status
+    now = datetime.now(timezone.utc)
     status, label = determine_valou_status(present, minutes_away, living_room_on, valou_room_on)
+
+    # Track status changes
+    history = load_valou_status_history()
+    
+    if history.get("status") != status:
+        # Status changed, update the timestamp
+        since_iso = now.isoformat().replace("+00:00", "Z")
+        save_valou_status_history(status, since_iso)
+        since = since_iso
+    else:
+        since = history.get("since")
+    
+    # Calculate duration since status change
+    since_minutes = None
+    since_human = None
+    if since:
+        try:
+            since_dt = datetime.fromisoformat(since.replace("Z", "+00:00"))
+            since_minutes = (now - since_dt).total_seconds() / 60
+            since_human = since_dt.strftime("%H:%M")
+        except Exception:
+            pass
 
     # Build response with enhanced roomie status
     response = presence_data.copy()
@@ -208,6 +277,9 @@ async def full_status(request):
     response["devices"]["roomie"]["enhanced_label"] = label
     response["devices"]["roomie"]["living_room_on"] = living_room_on
     response["devices"]["roomie"]["valou_room_on"] = valou_room_on
+    response["devices"]["roomie"]["since"] = since
+    response["devices"]["roomie"]["since_minutes"] = round(since_minutes) if since_minutes is not None else None
+    response["devices"]["roomie"]["since_human"] = since_human
 
     return JSONResponse(response)
 

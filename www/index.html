@@ -484,8 +484,14 @@
                                        (device.enhanced_status === 'sleeping' ? 'sleeping' : 'online');
                     
                     let statusText = `${config.icon} ${config.label}`;
+                    
+                    // Add "since" info
+                    if (device.since_human && device.since_minutes !== null) {
+                        statusText += ` since ${device.since_human} (${device.since_minutes} min)`;
+                    }
+                    
                     if (device.enhanced_status === 'away' && device.last_online_human) {
-                        statusText += ` — Last seen: ${device.last_online_human}`;
+                        statusText = `${config.icon} ${config.label} — Last seen: ${device.last_online_human}`;
                     }
                     
                     // Room light indicators
