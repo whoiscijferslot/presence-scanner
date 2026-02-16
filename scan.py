@@ -10,9 +10,11 @@ Debounce method: nmap MAC address scan (slower but definitive)
 
 When a state change is detected via ping, we wait 5 seconds and
 confirm with a full nmap scan to prevent false transitions.
+
+Data is stored in SQLite for reliability and easy querying.
 """
 
-import json
+import sqlite3
 import subprocess
 import sys
 import time
@@ -20,7 +22,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 # Configuration
-OUTPUT_FILE = Path("/home/sam1902/projects/presence-scanner/www/status.json")
+DB_FILE = Path("/home/sam1902/projects/presence-scanner/presence.db")
 NETWORK = "192.168.1.0/24"
 DEBOUNCE_DELAY = 5  # seconds to wait before confirmation scan
 PING_COUNT = 5  # number of ICMP packets to send
@@ -38,6 +40,86 @@ DEVICES = {
         "mac": "aa:bb:cc:dd:ee:02",
     },
 }
+
+
+def init_db(conn: sqlite3.Connection) -> None:
+    """Initialize database schema."""
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS devices (
+            device_id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            ip TEXT,
+            mac TEXT,
+            present INTEGER NOT NULL DEFAULT 0,
+            last_online TEXT,
+            updated_at TEXT NOT NULL
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS scans (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            scan_time TEXT NOT NULL,
+            device_id TEXT NOT NULL,
+            present INTEGER NOT NULL,
+            FOREIGN KEY (device_id) REFERENCES devices(device_id)
+        )
+    """)
+    # Keep only last 1000 scans per device
+    conn.execute("""
+        CREATE TRIGGER IF NOT EXISTS limit_scan_history
+        AFTER INSERT ON scans
+        BEGIN
+            DELETE FROM scans WHERE id IN (
+                SELECT id FROM scans 
+                WHERE device_id = NEW.device_id 
+                ORDER BY id DESC 
+                LIMIT -1 OFFSET 1000
+            );
+        END
+    """)
+    conn.commit()
+
+
+def get_device_state(conn: sqlite3.Connection, device_id: str) -> dict | None:
+    """Get current state of a device from database."""
+    row = conn.execute(
+        "SELECT present, last_online FROM devices WHERE device_id = ?",
+        (device_id,)
+    ).fetchone()
+    if row:
+        return {"present": bool(row[0]), "last_online": row[1]}
+    return None
+
+
+def update_device_state(
+    conn: sqlite3.Connection,
+    device_id: str,
+    name: str,
+    ip: str,
+    mac: str,
+    present: bool,
+    last_online: str | None,
+    scan_time: str
+) -> None:
+    """Update device state in database."""
+    conn.execute("""
+        INSERT INTO devices (device_id, name, ip, mac, present, last_online, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(device_id) DO UPDATE SET
+            name = excluded.name,
+            ip = excluded.ip,
+            mac = excluded.mac,
+            present = excluded.present,
+            last_online = excluded.last_online,
+            updated_at = excluded.updated_at
+    """, (device_id, name, ip, mac, int(present), last_online, scan_time))
+    
+    # Record in scan history
+    conn.execute(
+        "INSERT INTO scans (scan_time, device_id, present) VALUES (?, ?, ?)",
+        (scan_time, device_id, int(present))
+    )
+    conn.commit()
 
 
 def ping_device(ip: str) -> bool:
@@ -71,17 +153,6 @@ def run_nmap_scan(network: str) -> str:
         return ""
 
 
-def load_previous_state() -> dict:
-    """Load previous state from JSON file if it exists."""
-    if OUTPUT_FILE.exists():
-        try:
-            with OUTPUT_FILE.open() as f:
-                return json.load(f)
-        except (json.JSONDecodeError, IOError):
-            pass
-    return {}
-
-
 def detect_presence_ping() -> dict[str, bool]:
     """Check device presence using ICMP ping (fast)."""
     return {
@@ -99,9 +170,15 @@ def detect_presence_nmap(scan_output: str) -> dict[str, bool]:
 
 
 def main():
-    # Load previous state to compare
-    previous_state = load_previous_state()
-    previous_devices = previous_state.get("devices", {})
+    # Connect to database
+    conn = sqlite3.connect(DB_FILE)
+    init_db(conn)
+
+    # Load previous state from database
+    previous_state = {
+        device_id: get_device_state(conn, device_id) or {"present": False, "last_online": None}
+        for device_id in DEVICES
+    }
 
     # Run fast ping check
     print("Pinging devices...")
@@ -113,8 +190,7 @@ def main():
     # Check for state transitions that need confirmation
     needs_confirmation = []
     for device_id, is_present in presence.items():
-        prev_device = previous_devices.get(device_id, {})
-        was_present = prev_device.get("present", False)
+        was_present = previous_state[device_id]["present"]
         
         if is_present != was_present:
             transition = "appeared" if is_present else "disappeared"
@@ -138,56 +214,43 @@ def main():
                 presence[device_id] = expected_present
             else:
                 # Transition not confirmed - keep old state
-                prev_present = previous_devices.get(device_id, {}).get("present", False)
+                prev_present = previous_state[device_id]["present"]
                 print(f"  {DEVICES[device_id]['name']} {transition} NOT confirmed (fluke), keeping {'ONLINE' if prev_present else 'OFFLINE'}")
                 presence[device_id] = prev_present
 
-    # Get current time for output
+    # Get current time
     now = datetime.now(timezone.utc)
     scan_time_iso = now.strftime("%Y-%m-%dT%H:%M:%SZ")
     scan_time_human = now.strftime("%Y-%m-%d %H:%M:%S UTC")
 
-    # Build device status
-    devices_status = {}
+    # Update database
     for device_id, device_info in DEVICES.items():
         is_present = presence[device_id]
-
+        
         # Get previous last_online time
-        prev_device = previous_devices.get(device_id, {})
-        last_online = prev_device.get("last_online")
-        last_online_human = prev_device.get("last_online_human")
-
+        last_online = previous_state[device_id]["last_online"]
+        
         # Update last_online if device is currently present
         if is_present:
             last_online = scan_time_iso
-            last_online_human = scan_time_human
 
-        devices_status[device_id] = {
-            "name": device_info["name"],
-            "present": is_present,
-            "last_online": last_online,
-            "last_online_human": last_online_human,
-        }
+        update_device_state(
+            conn,
+            device_id=device_id,
+            name=device_info["name"],
+            ip=device_info["ip"],
+            mac=device_info["mac"],
+            present=is_present,
+            last_online=last_online,
+            scan_time=scan_time_iso
+        )
 
-    # Build output
-    output = {
-        "scan_time": scan_time_iso,
-        "scan_time_human": scan_time_human,
-        "devices": devices_status,
-    }
-
-    # Write JSON output
-    OUTPUT_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with OUTPUT_FILE.open("w") as f:
-        json.dump(output, f, indent=2)
-
-    # Set permissions
-    OUTPUT_FILE.chmod(0o644)
+    conn.close()
 
     print(f"Scan complete at {scan_time_human}")
-    for device_id, status in devices_status.items():
-        state = "ONLINE" if status["present"] else "OFFLINE"
-        print(f"  {status['name']}: {state}")
+    for device_id, device_info in DEVICES.items():
+        state = "ONLINE" if presence[device_id] else "OFFLINE"
+        print(f"  {device_info['name']}: {state}")
 
 
 if __name__ == "__main__":

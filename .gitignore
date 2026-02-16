@@ -7,3 +7,4 @@ www/status.json
 
 # Backups
 *.backup.*
+presence.db

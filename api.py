@@ -11,6 +11,7 @@
 
 import asyncio
 import json
+import sqlite3
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -25,14 +26,61 @@ DEBOUNCE_SECONDS = 5
 last_trigger_time = 0.0
 
 # Paths
-STATUS_FILE = Path("/home/sam1902/projects/presence-scanner/www/status.json")
-VALOU_STATUS_FILE = Path("/home/sam1902/projects/presence-scanner/www/valou_status.json")
+DB_FILE = Path("/home/sam1902/projects/presence-scanner/presence.db")
 HUE_TOKENS_FILE = Path.home() / ".config/bedwolf/hue-tokens.json"
 HUE_BRIDGE_IP = "192.168.1.103"
 
 # Hue room group IDs
 LIVING_ROOM_GROUP = "81"
 VALOU_ROOM_GROUP = "84"
+
+
+def get_db_connection() -> sqlite3.Connection:
+    """Get a database connection with row factory."""
+    conn = sqlite3.connect(DB_FILE)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def load_presence_data() -> dict:
+    """Load presence data from SQLite database."""
+    conn = get_db_connection()
+    try:
+        # Get the most recent update time
+        row = conn.execute(
+            "SELECT MAX(updated_at) as scan_time FROM devices"
+        ).fetchone()
+        scan_time = row["scan_time"] if row else None
+        
+        # Get all devices
+        devices = {}
+        for row in conn.execute("SELECT * FROM devices"):
+            device_id = row["device_id"]
+            devices[device_id] = {
+                "name": row["name"],
+                "present": bool(row["present"]),
+                "last_online": row["last_online"],
+                "last_online_human": format_time_human(row["last_online"]) if row["last_online"] else None,
+            }
+        
+        return {
+            "scan_time": scan_time,
+            "scan_time_human": format_time_human(scan_time) if scan_time else None,
+            "devices": devices,
+        }
+    finally:
+        conn.close()
+
+
+def format_time_human(iso_time: str | None) -> str | None:
+    """Convert ISO time to human readable format."""
+    if not iso_time:
+        return None
+    try:
+        dt = datetime.fromisoformat(iso_time.replace("Z", "+00:00"))
+        return dt.strftime("%Y-%m-%d %H:%M:%S UTC")
+    except Exception:
+        return iso_time
 
 
 def load_hue_username() -> str | None:
@@ -46,20 +94,43 @@ def load_hue_username() -> str | None:
 
 
 def load_valou_status_history() -> dict:
-    """Load the last known Roomie status and when it changed."""
+    """Load the last known Roomie status from database."""
+    conn = get_db_connection()
     try:
-        with VALOU_STATUS_FILE.open() as f:
-            return json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
+        # Store roomie status in a separate table
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS valou_status (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                status TEXT,
+                since TEXT
+            )
+        """)
+        row = conn.execute("SELECT status, since FROM valou_status WHERE id = 1").fetchone()
+        if row:
+            return {"status": row["status"], "since": row["since"]}
         return {"status": None, "since": None}
+    finally:
+        conn.close()
 
 
 def save_valou_status_history(status: str, since: str) -> None:
-    """Save the current Roomie status and timestamp."""
-    data = {"status": status, "since": since}
-    with VALOU_STATUS_FILE.open("w") as f:
-        json.dump(data, f, indent=2)
-    VALOU_STATUS_FILE.chmod(0o644)
+    """Save the current Roomie status to database."""
+    conn = get_db_connection()
+    try:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS valou_status (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                status TEXT,
+                since TEXT
+            )
+        """)
+        conn.execute("""
+            INSERT INTO valou_status (id, status, since) VALUES (1, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET status = excluded.status, since = excluded.since
+        """, (status, since))
+        conn.commit()
+    finally:
+        conn.close()
 
 
 async def get_room_state(client: httpx.AsyncClient, username: str, group_id: str) -> bool:
@@ -134,12 +205,11 @@ async def trigger_scan(request):
 
 async def valou_status(request):
     """Get enhanced Roomie status based on presence + room lights."""
-    # Load presence data
+    # Load presence data from database
     try:
-        with STATUS_FILE.open() as f:
-            presence_data = json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
-        return JSONResponse({"error": "Presence data unavailable"}, status_code=500)
+        presence_data = load_presence_data()
+    except Exception as e:
+        return JSONResponse({"error": f"Presence data unavailable: {e}"}, status_code=500)
 
     roomie = presence_data.get("devices", {}).get("roomie", {})
     present = roomie.get("present", False)
@@ -212,12 +282,11 @@ async def valou_status(request):
 
 async def full_status(request):
     """Get full presence status for all devices + enhanced Roomie status."""
-    # Load presence data
+    # Load presence data from database
     try:
-        with STATUS_FILE.open() as f:
-            presence_data = json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
-        return JSONResponse({"error": "Presence data unavailable"}, status_code=500)
+        presence_data = load_presence_data()
+    except Exception as e:
+        return JSONResponse({"error": f"Presence data unavailable: {e}"}, status_code=500)
 
     roomie = presence_data.get("devices", {}).get("roomie", {})
     present = roomie.get("present", False)
