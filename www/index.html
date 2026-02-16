@@ -263,6 +263,22 @@
             color: var(--gray);
         }
 
+        .room-lights {
+            margin-top: 8px;
+            font-size: 0.8rem;
+            color: var(--green-dim);
+        }
+
+        .status.sleeping {
+            background: rgba(100, 100, 100, 0.1);
+            border-left: 3px solid #666666;
+            color: #666666;
+        }
+
+        .status.sleeping .status-indicator {
+            animation: none;
+        }
+
         .scan-info {
             margin-top: 25px;
             padding-top: 15px;
@@ -404,6 +420,15 @@
             offline: '○ OFFLINE — Device not found'
         };
 
+        // Enhanced Roomie status config
+        const valouStatusConfig = {
+            downstairs: { label: 'Downstairs', color: '#00ff00', icon: '🏠' },
+            around: { label: 'Around', color: '#fbbf24', icon: '🔄' },
+            awake: { label: 'Awake', color: '#fbbf24', icon: '👀' },
+            sleeping: { label: 'Sleeping', color: '#666666', icon: '😴' },
+            away: { label: 'Away', color: '#ff3333', icon: '🚗' }
+        };
+
         function formatLastSeen(lastOnlineHuman, isOnline) {
             if (!lastOnlineHuman) {
                 return '<span class="last-seen never">Never seen on network</span>';
@@ -416,8 +441,16 @@
 
         async function fetchStatus() {
             try {
-                const response = await fetch('/presence/status.json?' + Date.now());
-                if (!response.ok) throw new Error('Status file not found');
+                // Use the enhanced API endpoint
+                const response = await fetch('/presence/api/status?' + Date.now());
+                if (!response.ok) {
+                    // Fallback to static file
+                    const fallback = await fetch('/presence/status.json?' + Date.now());
+                    if (!fallback.ok) throw new Error('Status not available');
+                    const data = await fallback.json();
+                    renderStatus(data);
+                    return;
+                }
                 const data = await response.json();
                 renderStatus(data);
             } catch (error) {
@@ -442,24 +475,60 @@
 
             for (const [key, device] of Object.entries(devices)) {
                 const isOnline = device.present;
-                const statusClass = isOnline ? 'online' : 'offline';
-                const statusText = isOnline ? statusLabels.online : statusLabels.offline;
-                const lastSeenHtml = formatLastSeen(device.last_online_human, isOnline);
                 const icon = '📱';
                 
-                html += `
-                    <div class="device-card">
-                        <div class="device-name">
-                            <span class="device-icon">${icon}</span>
-                            ${device.name}'s iPhone
+                // Check for enhanced Roomie status
+                if (key === 'roomie' && device.enhanced_status) {
+                    const config = valouStatusConfig[device.enhanced_status] || valouStatusConfig.away;
+                    const statusClass = device.enhanced_status === 'away' ? 'offline' : 
+                                       (device.enhanced_status === 'sleeping' ? 'sleeping' : 'online');
+                    
+                    let statusText = `${config.icon} ${config.label}`;
+                    if (device.enhanced_status === 'away' && device.last_online_human) {
+                        statusText += ` — Last seen: ${device.last_online_human}`;
+                    }
+                    
+                    // Room light indicators
+                    let roomInfo = '';
+                    if (device.living_room_on !== undefined) {
+                        const livingIcon = device.living_room_on ? '💡' : '⚫';
+                        const valouIcon = device.valou_room_on ? '💡' : '⚫';
+                        roomInfo = `<div class="room-lights">Living: ${livingIcon} | Roomie: ${valouIcon}</div>`;
+                    }
+                    
+                    html += `
+                        <div class="device-card">
+                            <div class="device-name">
+                                <span class="device-icon">${icon}</span>
+                                ${device.name}'s iPhone
+                            </div>
+                            <div class="status ${statusClass}" style="border-left-color: ${config.color}; ${statusClass === 'sleeping' ? 'background: rgba(100,100,100,0.1);' : ''}">
+                                <span class="status-indicator" style="background: ${config.color}; box-shadow: 0 0 10px ${config.color};"></span>
+                                <span style="color: ${config.color};">${statusText}</span>
+                            </div>
+                            ${roomInfo}
                         </div>
-                        <div class="status ${statusClass}">
-                            <span class="status-indicator"></span>
-                            <span>${statusText}</span>
+                    `;
+                } else {
+                    // Standard display for Alex or fallback
+                    const statusClass = isOnline ? 'online' : 'offline';
+                    const statusText = isOnline ? statusLabels.online : statusLabels.offline;
+                    const lastSeenHtml = formatLastSeen(device.last_online_human, isOnline);
+                    
+                    html += `
+                        <div class="device-card">
+                            <div class="device-name">
+                                <span class="device-icon">${icon}</span>
+                                ${device.name}'s iPhone
+                            </div>
+                            <div class="status ${statusClass}">
+                                <span class="status-indicator"></span>
+                                <span>${statusText}</span>
+                            </div>
+                            ${lastSeenHtml}
                         </div>
-                        ${lastSeenHtml}
-                    </div>
-                `;
+                    `;
+                }
             }
 
             html += `

@@ -4,12 +4,18 @@
 # dependencies = [
 #   "starlette==0.45.3",
 #   "uvicorn==0.34.0",
+#   "httpx==0.28.1",
 # ]
 # ///
-"""Presence Scanner API - HTTP endpoint to trigger manual scans."""
+"""Presence Scanner API - HTTP endpoint to trigger manual scans and get enhanced status."""
 
 import asyncio
+import json
 import time
+from pathlib import Path
+from typing import Literal
+
+import httpx
 from starlette.applications import Starlette
 from starlette.responses import JSONResponse
 from starlette.routing import Route
@@ -17,8 +23,71 @@ from starlette.routing import Route
 DEBOUNCE_SECONDS = 5
 last_trigger_time = 0.0
 
+# Paths
+STATUS_FILE = Path("/home/sam1902/projects/presence-scanner/www/status.json")
+HUE_TOKENS_FILE = Path.home() / ".config/bedwolf/hue-tokens.json"
+HUE_BRIDGE_IP = "192.168.1.103"
+
+# Hue room group IDs
+LIVING_ROOM_GROUP = "81"
+VALOU_ROOM_GROUP = "84"
+
+
+def load_hue_username() -> str | None:
+    """Load Hue API username from bedwolf config."""
+    try:
+        with HUE_TOKENS_FILE.open() as f:
+            data = json.load(f)
+            return data.get("username")
+    except (FileNotFoundError, json.JSONDecodeError):
+        return None
+
+
+async def get_room_state(client: httpx.AsyncClient, username: str, group_id: str) -> bool:
+    """Check if any light in a room is on."""
+    try:
+        response = await client.get(
+            f"http://{HUE_BRIDGE_IP}/api/{username}/groups/{group_id}",
+            timeout=5.0
+        )
+        data = response.json()
+        return data.get("state", {}).get("any_on", False)
+    except Exception:
+        return False
+
+
+ValouStatus = Literal["downstairs", "around", "awake", "sleeping", "away"]
+
+
+def determine_valou_status(
+    present: bool,
+    minutes_away: float,
+    living_room_on: bool,
+    valou_room_on: bool
+) -> tuple[ValouStatus, str]:
+    """
+    Determine Roomie's status based on presence and room lights.
+    
+    Returns (status, label) tuple.
+    """
+    # Consider "at home" if detected OR away for less than 5 minutes
+    is_effectively_home = present or minutes_away < 5
+
+    if not is_effectively_home:
+        return "away", "Away"
+    elif living_room_on and not valou_room_on:
+        return "downstairs", "Downstairs"
+    elif living_room_on and valou_room_on:
+        return "around", "Around"
+    elif not living_room_on and valou_room_on:
+        return "awake", "Awake"
+    else:
+        # Both off
+        return "sleeping", "Sleeping"
+
 
 async def trigger_scan(request):
+    """Trigger a manual presence scan."""
     global last_trigger_time
     now = time.time()
     elapsed = now - last_trigger_time
@@ -44,7 +113,110 @@ async def trigger_scan(request):
         return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
 
 
-app = Starlette(routes=[Route("/scan", trigger_scan, methods=["POST"])])
+async def valou_status(request):
+    """Get enhanced Roomie status based on presence + room lights."""
+    # Load presence data
+    try:
+        with STATUS_FILE.open() as f:
+            presence_data = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return JSONResponse({"error": "Presence data unavailable"}, status_code=500)
+
+    roomie = presence_data.get("devices", {}).get("roomie", {})
+    present = roomie.get("present", False)
+    last_online = roomie.get("last_online")
+    
+    # Calculate minutes away
+    minutes_away = float("inf")
+    if last_online:
+        try:
+            from datetime import datetime, timezone
+            last_online_dt = datetime.fromisoformat(last_online.replace("Z", "+00:00"))
+            now = datetime.now(timezone.utc)
+            minutes_away = (now - last_online_dt).total_seconds() / 60
+        except Exception:
+            pass
+
+    # Get Hue room states
+    hue_username = load_hue_username()
+    living_room_on = False
+    valou_room_on = False
+
+    if hue_username:
+        async with httpx.AsyncClient() as client:
+            living_room_on, valou_room_on = await asyncio.gather(
+                get_room_state(client, hue_username, LIVING_ROOM_GROUP),
+                get_room_state(client, hue_username, VALOU_ROOM_GROUP),
+            )
+
+    # Determine status
+    status, label = determine_valou_status(present, minutes_away, living_room_on, valou_room_on)
+
+    return JSONResponse({
+        "status": status,
+        "label": label,
+        "present": present,
+        "last_online": last_online,
+        "minutes_away": minutes_away if minutes_away != float("inf") else None,
+        "living_room_on": living_room_on,
+        "valou_room_on": valou_room_on,
+    })
+
+
+async def full_status(request):
+    """Get full presence status for all devices + enhanced Roomie status."""
+    # Load presence data
+    try:
+        with STATUS_FILE.open() as f:
+            presence_data = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return JSONResponse({"error": "Presence data unavailable"}, status_code=500)
+
+    roomie = presence_data.get("devices", {}).get("roomie", {})
+    present = roomie.get("present", False)
+    last_online = roomie.get("last_online")
+    
+    # Calculate minutes away
+    minutes_away = float("inf")
+    if last_online:
+        try:
+            from datetime import datetime, timezone
+            last_online_dt = datetime.fromisoformat(last_online.replace("Z", "+00:00"))
+            now = datetime.now(timezone.utc)
+            minutes_away = (now - last_online_dt).total_seconds() / 60
+        except Exception:
+            pass
+
+    # Get Hue room states
+    hue_username = load_hue_username()
+    living_room_on = False
+    valou_room_on = False
+
+    if hue_username:
+        async with httpx.AsyncClient() as client:
+            living_room_on, valou_room_on = await asyncio.gather(
+                get_room_state(client, hue_username, LIVING_ROOM_GROUP),
+                get_room_state(client, hue_username, VALOU_ROOM_GROUP),
+            )
+
+    # Determine Roomie status
+    status, label = determine_valou_status(present, minutes_away, living_room_on, valou_room_on)
+
+    # Build response with enhanced roomie status
+    response = presence_data.copy()
+    response["devices"]["roomie"]["enhanced_status"] = status
+    response["devices"]["roomie"]["enhanced_label"] = label
+    response["devices"]["roomie"]["living_room_on"] = living_room_on
+    response["devices"]["roomie"]["valou_room_on"] = valou_room_on
+
+    return JSONResponse(response)
+
+
+app = Starlette(routes=[
+    Route("/scan", trigger_scan, methods=["POST"]),
+    Route("/roomie-status", valou_status, methods=["GET"]),
+    Route("/status", full_status, methods=["GET"]),
+])
 
 if __name__ == "__main__":
     import uvicorn
