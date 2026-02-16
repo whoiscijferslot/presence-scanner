@@ -1,18 +1,32 @@
 """SQLite database operations for presence scanner."""
 
 import sqlite3
-from datetime import datetime, timezone
-from pathlib import Path
+from dataclasses import dataclass
+from datetime import datetime
 
-from .config import DB_FILE, DATA_DIR
+from loguru import logger
+
+from .config import settings
+
+
+@dataclass
+class DeviceUpdate:
+    """Data for updating a device state."""
+
+    device_id: str
+    name: str
+    ip: str
+    mac: str
+    present: bool
+    last_online: str | None
+    scan_time: str
 
 
 def get_connection() -> sqlite3.Connection:
     """Get a database connection with row factory."""
-    # Ensure data directory exists
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    
-    conn = sqlite3.connect(DB_FILE)
+    settings.data_dir.mkdir(parents=True, exist_ok=True)
+
+    conn = sqlite3.connect(settings.db_file)
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -48,31 +62,31 @@ def init_db() -> None:
                 since TEXT
             )
         """)
-        # Keep only last 1000 scans per device
         conn.execute("""
             CREATE TRIGGER IF NOT EXISTS limit_scan_history
             AFTER INSERT ON scans
             BEGIN
                 DELETE FROM scans WHERE id IN (
-                    SELECT id FROM scans 
-                    WHERE device_id = NEW.device_id 
-                    ORDER BY id DESC 
+                    SELECT id FROM scans
+                    WHERE device_id = NEW.device_id
+                    ORDER BY id DESC
                     LIMIT -1 OFFSET 1000
                 );
             END
         """)
         conn.commit()
+        logger.debug("Database schema initialized")
     finally:
         conn.close()
 
 
-def get_device_state(device_id: str) -> dict | None:
+def get_device_state(device_id: str) -> dict[str, bool | str | None] | None:
     """Get current state of a device from database."""
     conn = get_connection()
     try:
         row = conn.execute(
             "SELECT present, last_online FROM devices WHERE device_id = ?",
-            (device_id,)
+            (device_id,),
         ).fetchone()
         if row:
             return {"present": bool(row["present"]), "last_online": row["last_online"]}
@@ -81,27 +95,29 @@ def get_device_state(device_id: str) -> dict | None:
         conn.close()
 
 
-def get_all_device_states() -> dict:
+DevicesDict = dict[str, dict[str, str | bool | None]]
+PresenceData = dict[str, str | DevicesDict | None]
+
+
+def get_all_device_states() -> PresenceData:
     """Get current state of all devices."""
     conn = get_connection()
     try:
-        # Get the most recent update time
         row = conn.execute(
             "SELECT MAX(updated_at) as scan_time FROM devices"
         ).fetchone()
-        scan_time = row["scan_time"] if row else None
-        
-        # Get all devices
-        devices = {}
+        scan_time: str | None = row["scan_time"] if row else None
+
+        devices: DevicesDict = {}
         for row in conn.execute("SELECT * FROM devices"):
-            device_id = row["device_id"]
+            device_id: str = row["device_id"]
             devices[device_id] = {
                 "name": row["name"],
                 "present": bool(row["present"]),
                 "last_online": row["last_online"],
                 "last_online_human": format_time_human(row["last_online"]),
             }
-        
+
         return {
             "scan_time": scan_time,
             "scan_time_human": format_time_human(scan_time),
@@ -111,20 +127,14 @@ def get_all_device_states() -> dict:
         conn.close()
 
 
-def update_device_state(
-    device_id: str,
-    name: str,
-    ip: str,
-    mac: str,
-    present: bool,
-    last_online: str | None,
-    scan_time: str
-) -> None:
+def update_device_state(update: DeviceUpdate) -> None:
     """Update device state in database."""
     conn = get_connection()
     try:
-        conn.execute("""
-            INSERT INTO devices (device_id, name, ip, mac, present, last_online, updated_at)
+        conn.execute(
+            """
+            INSERT INTO devices
+                (device_id, name, ip, mac, present, last_online, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(device_id) DO UPDATE SET
                 name = excluded.name,
@@ -133,19 +143,28 @@ def update_device_state(
                 present = excluded.present,
                 last_online = excluded.last_online,
                 updated_at = excluded.updated_at
-        """, (device_id, name, ip, mac, int(present), last_online, scan_time))
-        
-        # Record in scan history
+            """,
+            (
+                update.device_id,
+                update.name,
+                update.ip,
+                update.mac,
+                int(update.present),
+                update.last_online,
+                update.scan_time,
+            ),
+        )
+
         conn.execute(
             "INSERT INTO scans (scan_time, device_id, present) VALUES (?, ?, ?)",
-            (scan_time, device_id, int(present))
+            (update.scan_time, update.device_id, int(update.present)),
         )
         conn.commit()
     finally:
         conn.close()
 
 
-def get_valou_status_history() -> dict:
+def get_valou_status_history() -> dict[str, str | None]:
     """Get the last known Roomie status."""
     conn = get_connection()
     try:
@@ -163,10 +182,15 @@ def save_valou_status_history(status: str, since: str) -> None:
     """Save the current Roomie status."""
     conn = get_connection()
     try:
-        conn.execute("""
+        conn.execute(
+            """
             INSERT INTO valou_status (id, status, since) VALUES (1, ?, ?)
-            ON CONFLICT(id) DO UPDATE SET status = excluded.status, since = excluded.since
-        """, (status, since))
+            ON CONFLICT(id) DO UPDATE SET
+                status = excluded.status,
+                since = excluded.since
+            """,
+            (status, since),
+        )
         conn.commit()
     finally:
         conn.close()
@@ -177,7 +201,7 @@ def format_time_human(iso_time: str | None) -> str | None:
     if not iso_time:
         return None
     try:
-        dt = datetime.fromisoformat(iso_time.replace("Z", "+00:00"))
+        dt = datetime.fromisoformat(iso_time)
         return dt.strftime("%Y-%m-%d %H:%M:%S UTC")
-    except Exception:
+    except ValueError:
         return iso_time
