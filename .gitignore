@@ -1,16 +1,17 @@
-# UV cache
-.cache/
-.local/
-
-# Status file (generated)
-www/status.json
-
-# Backups
-*.backup.*
-presence.db
+# Python
 __pycache__/
 *.pyc
+*.pyo
 .venv/
 *.egg-info/
 dist/
 build/
+
+# UV cache
+.cache/
+.local/
+
+# IDE
+.idea/
+.vscode/
+*.swp
