@@ -5,16 +5,16 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Presence Scanner // example.com</title>
     
-    <!-- Favicons -->
-    <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
-    <link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32x32.png">
-    <link rel="icon" type="image/png" sizes="16x16" href="/static/favicon-16x16.png">
+    <!-- Favicons (relative paths for proxy compatibility) -->
+    <link rel="icon" type="image/svg+xml" href="static/favicon.svg">
+    <link rel="icon" type="image/png" sizes="32x32" href="static/favicon-32x32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="static/favicon-16x16.png">
     
     <!-- Apple Touch Icon for iPhone homescreen -->
-    <link rel="apple-touch-icon" sizes="180x180" href="/static/apple-touch-icon.png">
+    <link rel="apple-touch-icon" sizes="180x180" href="static/apple-touch-icon.png">
     
     <!-- Web Manifest for Android/PWA -->
-    <link rel="manifest" href="/static/site.webmanifest">
+    <link rel="manifest" href="static/site.webmanifest">
     
     <!-- Theme colors -->
     <meta name="theme-color" content="#0a0a0a">
@@ -442,7 +442,7 @@
         async function fetchStatus() {
             try {
                 // Use the enhanced API endpoint
-                const response = await fetch('/api/status?' + Date.now());
+                const response = await fetch('api/status?' + Date.now());
                 if (!response.ok) {
                     throw new Error('Status not available');
                 }
