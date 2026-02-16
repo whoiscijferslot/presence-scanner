@@ -5,17 +5,23 @@
 """
 Presence Scanner - Scans network for specific MAC addresses using nmap.
 Tracks current presence and last online time for each device.
+
+Implements debounce: when a state change is detected, waits 5 seconds
+and re-scans to confirm. This prevents false transitions from network
+instability or temporary phone disconnections.
 """
 
 import json
 import subprocess
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
 # Configuration
 OUTPUT_FILE = Path("/home/sam1902/projects/presence-scanner/www/status.json")
 NETWORK = "192.168.1.0/24"
+DEBOUNCE_DELAY = 5  # seconds to wait before confirmation scan
 
 # Devices to track (MAC addresses in lowercase)
 DEVICES = {
@@ -59,24 +65,65 @@ def load_previous_state() -> dict:
     return {}
 
 
+def detect_presence(scan_output: str) -> dict[str, bool]:
+    """Check which devices are present in scan output."""
+    return {
+        device_id: device_info["mac"].lower() in scan_output
+        for device_id, device_info in DEVICES.items()
+    }
+
+
 def main():
-    # Get current time
+    # Load previous state to compare
+    previous_state = load_previous_state()
+    previous_devices = previous_state.get("devices", {})
+
+    # Run the initial scan
+    print("Running scan...")
+    scan_output = run_nmap_scan(NETWORK)
+    presence = detect_presence(scan_output)
+
+    # Check for state transitions that need confirmation
+    needs_confirmation = []
+    for device_id, is_present in presence.items():
+        prev_device = previous_devices.get(device_id, {})
+        was_present = prev_device.get("present", False)
+        
+        if is_present != was_present:
+            transition = "appeared" if is_present else "disappeared"
+            needs_confirmation.append((device_id, is_present, transition))
+            print(f"  {DEVICES[device_id]['name']} {transition} - needs confirmation")
+
+    # If there are state changes, wait and re-scan to confirm
+    if needs_confirmation:
+        print(f"Waiting {DEBOUNCE_DELAY}s for confirmation scan...")
+        time.sleep(DEBOUNCE_DELAY)
+        
+        print("Running confirmation scan...")
+        confirm_output = run_nmap_scan(NETWORK)
+        confirm_presence = detect_presence(confirm_output)
+        
+        # Check which transitions are confirmed
+        for device_id, expected_present, transition in needs_confirmation:
+            confirmed = confirm_presence[device_id]
+            if confirmed == expected_present:
+                print(f"  {DEVICES[device_id]['name']} {transition} CONFIRMED")
+                presence[device_id] = expected_present
+            else:
+                # Transition not confirmed - keep old state
+                prev_present = previous_devices.get(device_id, {}).get("present", False)
+                print(f"  {DEVICES[device_id]['name']} {transition} NOT confirmed (fluke), keeping {'ONLINE' if prev_present else 'OFFLINE'}")
+                presence[device_id] = prev_present
+
+    # Get current time for output
     now = datetime.now(timezone.utc)
     scan_time_iso = now.strftime("%Y-%m-%dT%H:%M:%SZ")
     scan_time_human = now.strftime("%Y-%m-%d %H:%M:%S UTC")
 
-    # Run the scan
-    scan_output = run_nmap_scan(NETWORK)
-
-    # Load previous state to preserve last_online times
-    previous_state = load_previous_state()
-    previous_devices = previous_state.get("devices", {})
-
-    # Check each device
+    # Build device status
     devices_status = {}
     for device_id, device_info in DEVICES.items():
-        mac = device_info["mac"].lower()
-        is_present = mac in scan_output
+        is_present = presence[device_id]
 
         # Get previous last_online time
         prev_device = previous_devices.get(device_id, {})
