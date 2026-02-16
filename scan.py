@@ -3,12 +3,13 @@
 # requires-python = ">=3.14"
 # ///
 """
-Presence Scanner - Scans network for specific MAC addresses using nmap.
-Tracks current presence and last online time for each device.
+Presence Scanner - Detects phone presence on the network.
 
-Implements debounce: when a state change is detected, waits 5 seconds
-and re-scans to confirm. This prevents false transitions from network
-instability or temporary phone disconnections.
+Primary method: ICMP ping to fixed IP addresses (fast, ~1 second)
+Debounce method: nmap MAC address scan (slower but definitive)
+
+When a state change is detected via ping, we wait 5 seconds and
+confirm with a full nmap scan to prevent false transitions.
 """
 
 import json
@@ -22,22 +23,38 @@ from pathlib import Path
 OUTPUT_FILE = Path("/home/sam1902/projects/presence-scanner/www/status.json")
 NETWORK = "192.168.1.0/24"
 DEBOUNCE_DELAY = 5  # seconds to wait before confirmation scan
+PING_COUNT = 5  # number of ICMP packets to send
 
-# Devices to track (MAC addresses in lowercase)
+# Devices to track
 DEVICES = {
     "alex": {
         "name": "Alex",
+        "ip": "192.168.1.101",
         "mac": "aa:bb:cc:dd:ee:01",
     },
     "roomie": {
         "name": "Roomie",
+        "ip": "192.168.1.102",
         "mac": "aa:bb:cc:dd:ee:02",
     },
 }
 
 
+def ping_device(ip: str) -> bool:
+    """Ping an IP address. Returns True if device responds."""
+    try:
+        result = subprocess.run(
+            ["ping", "-c", str(PING_COUNT), "-W", "1", ip],
+            capture_output=True,
+            timeout=PING_COUNT + 5,
+        )
+        return result.returncode == 0
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return False
+
+
 def run_nmap_scan(network: str) -> str:
-    """Run nmap ping scan and return output."""
+    """Run nmap ping scan and return output (for MAC-based confirmation)."""
     try:
         result = subprocess.run(
             ["nmap", "-sn", "-PR", network],
@@ -65,8 +82,16 @@ def load_previous_state() -> dict:
     return {}
 
 
-def detect_presence(scan_output: str) -> dict[str, bool]:
-    """Check which devices are present in scan output."""
+def detect_presence_ping() -> dict[str, bool]:
+    """Check device presence using ICMP ping (fast)."""
+    return {
+        device_id: ping_device(device_info["ip"])
+        for device_id, device_info in DEVICES.items()
+    }
+
+
+def detect_presence_nmap(scan_output: str) -> dict[str, bool]:
+    """Check device presence using nmap MAC detection (definitive)."""
     return {
         device_id: device_info["mac"].lower() in scan_output
         for device_id, device_info in DEVICES.items()
@@ -78,10 +103,12 @@ def main():
     previous_state = load_previous_state()
     previous_devices = previous_state.get("devices", {})
 
-    # Run the initial scan
-    print("Running scan...")
-    scan_output = run_nmap_scan(NETWORK)
-    presence = detect_presence(scan_output)
+    # Run fast ping check
+    print("Pinging devices...")
+    presence = detect_presence_ping()
+    
+    for device_id, is_present in presence.items():
+        print(f"  {DEVICES[device_id]['name']}: {'responds' if is_present else 'no response'}")
 
     # Check for state transitions that need confirmation
     needs_confirmation = []
@@ -92,22 +119,22 @@ def main():
         if is_present != was_present:
             transition = "appeared" if is_present else "disappeared"
             needs_confirmation.append((device_id, is_present, transition))
-            print(f"  {DEVICES[device_id]['name']} {transition} - needs confirmation")
+            print(f"  {DEVICES[device_id]['name']} {transition} - needs nmap confirmation")
 
-    # If there are state changes, wait and re-scan to confirm
+    # If there are state changes, wait and confirm with nmap MAC scan
     if needs_confirmation:
-        print(f"Waiting {DEBOUNCE_DELAY}s for confirmation scan...")
+        print(f"Waiting {DEBOUNCE_DELAY}s for confirmation...")
         time.sleep(DEBOUNCE_DELAY)
         
-        print("Running confirmation scan...")
+        print("Running nmap confirmation scan (MAC-based)...")
         confirm_output = run_nmap_scan(NETWORK)
-        confirm_presence = detect_presence(confirm_output)
+        confirm_presence = detect_presence_nmap(confirm_output)
         
         # Check which transitions are confirmed
         for device_id, expected_present, transition in needs_confirmation:
             confirmed = confirm_presence[device_id]
             if confirmed == expected_present:
-                print(f"  {DEVICES[device_id]['name']} {transition} CONFIRMED")
+                print(f"  {DEVICES[device_id]['name']} {transition} CONFIRMED by MAC")
                 presence[device_id] = expected_present
             else:
                 # Transition not confirmed - keep old state
