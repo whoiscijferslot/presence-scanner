@@ -1,4 +1,4 @@
-"""Network scanning using nmap."""
+"""Network scanning using ping and nmap."""
 
 import asyncio
 import subprocess
@@ -11,83 +11,51 @@ from .database import DeviceUpdate, get_device_state, update_device_state
 from .models import DeviceState
 
 # Full paths for security
-SUDO_PATH = "/usr/bin/sudo"
-NMAP_PATH = "/usr/bin/nmap"
+PING_PATH = "/usr/bin/ping"
 
 
-def run_nmap_icmp(ips: list[str]) -> dict[str, bool]:
+def ping_host(ip: str) -> bool:
     """
-    Run nmap ICMP ping scan on specific IPs.
+    Ping a single host using standard ICMP ping.
+
+    iPhones respond to regular ping but often block nmap's probes.
+    """
+    try:
+        result = subprocess.run(  # noqa: S603
+            [PING_PATH, "-c", "2", "-W", "2", ip],
+            capture_output=True,
+            timeout=10,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return False
+    except FileNotFoundError:
+        logger.error("ping not found")
+        return False
+    else:
+        return result.returncode == 0
+
+
+def run_ping_scan(ips: list[str]) -> dict[str, bool]:
+    """
+    Ping multiple IPs using standard ICMP ping.
 
     Returns dict of ip -> is_present.
-    Uses sudo for raw socket access.
+    More reliable for iPhones than nmap ICMP probes.
     """
     if not ips:
         return {}
 
-    results: dict[str, bool] = {}
-    try:
-        result = subprocess.run(  # noqa: S603
-            [SUDO_PATH, NMAP_PATH, "-sn", "-PE", "--host-timeout", "3s", *ips],
-            capture_output=True,
-            text=True,
-            timeout=20,
-            check=False,
-        )
-        output = result.stdout
-
-        for ip in ips:
-            results[ip] = ip in output and "Host is up" in output
-
-    except subprocess.TimeoutExpired:
-        logger.error("nmap ICMP scan timed out")
-        return dict.fromkeys(ips, False)
-    except FileNotFoundError:
-        logger.error("nmap not found")
-        return dict.fromkeys(ips, False)
-
-    return results
+    return {ip: ping_host(ip) for ip in ips}
 
 
-def run_nmap_arp(network: str) -> str:
-    """
-    Run nmap ARP scan on network.
-
-    Returns raw output for MAC address matching.
-    Uses sudo for ARP access.
-    """
-    try:
-        result = subprocess.run(  # noqa: S603
-            [SUDO_PATH, NMAP_PATH, "-sn", "-PR", network],
-            capture_output=True,
-            text=True,
-            timeout=120,
-            check=False,
-        )
-        return result.stdout.lower()
-    except subprocess.TimeoutExpired:
-        logger.error("nmap ARP scan timed out")
-        return ""
-    except FileNotFoundError:
-        logger.error("nmap not found")
-        return ""
-
-
-def detect_presence_icmp() -> dict[str, bool]:
-    """Check device presence using ICMP ping (fast)."""
+def detect_presence_ping() -> dict[str, bool]:
+    """Check device presence using standard ICMP ping (reliable for iPhones)."""
     ips = [device.ip for device in settings.devices.values()]
-    ip_results = run_nmap_icmp(ips)
+    ip_results = run_ping_scan(ips)
 
     return {
         device_id: ip_results.get(device.ip, False)
-        for device_id, device in settings.devices.items()
-    }
-
-
-def detect_presence_arp(scan_output: str) -> dict[str, bool]:
-    """Check device presence using ARP/MAC detection (definitive)."""
-    return {
-        device_id: device.mac.lower() in scan_output
         for device_id, device in settings.devices.items()
     }
 
@@ -104,8 +72,8 @@ async def run_scan() -> dict[str, bool]:
         for device_id in settings.devices
     }
 
-    logger.info("Running ICMP ping scan...")
-    presence = await asyncio.to_thread(detect_presence_icmp)
+    logger.info("Running ping scan...")
+    presence = await asyncio.to_thread(detect_presence_ping)
 
     for device_id, is_present in presence.items():
         status = "responds" if is_present else "no response"
@@ -119,21 +87,20 @@ async def run_scan() -> dict[str, bool]:
             transition = "appeared" if is_present else "disappeared"
             needs_confirmation.append((device_id, is_present, transition))
             device_name = settings.devices[device_id].name
-            logger.info(f"  {device_name} {transition} - needs ARP confirmation")
+            logger.info(f"  {device_name} {transition} - needs confirmation")
 
     if needs_confirmation:
         logger.info(f"Waiting {settings.debounce_delay}s for confirmation...")
         await asyncio.sleep(settings.debounce_delay)
 
-        logger.info("Running ARP confirmation scan (MAC-based)...")
-        confirm_output = await asyncio.to_thread(run_nmap_arp, settings.network)
-        confirm_presence = detect_presence_arp(confirm_output)
+        logger.info("Running confirmation ping scan...")
+        confirm_presence = await asyncio.to_thread(detect_presence_ping)
 
         for device_id, expected_present, transition in needs_confirmation:
             confirmed = confirm_presence[device_id]
             device_name = settings.devices[device_id].name
             if confirmed == expected_present:
-                logger.info(f"  {device_name} {transition} CONFIRMED by MAC")
+                logger.info(f"  {device_name} {transition} CONFIRMED")
                 presence[device_id] = expected_present
             else:
                 prev_present = previous_state[device_id].present
