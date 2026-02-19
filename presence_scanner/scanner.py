@@ -1,4 +1,10 @@
-"""Network scanning using ping with ARP fallback."""
+"""Network scanning using Zyxel router API, ping, and ARP fallback.
+
+Detection priority:
+1. Zyxel Router API - Most reliable, tracks all connected devices
+2. ICMP Ping - Fast, works when device is awake
+3. ARP Cache - Fallback for sleeping iPhones that don't respond to ping
+"""
 
 import asyncio
 import re
@@ -10,16 +16,13 @@ from loguru import logger
 from .config import settings
 from .database import DeviceUpdate, get_device_state, update_device_state
 from .models import DeviceState
+from .zyxel import ZyxelConfig, check_device_presence
 
 # Full paths for security
 PING_PATH = "/usr/bin/ping"
 IP_PATH = "/usr/sbin/ip"
 
 # ARP neighbor states that indicate presence
-# REACHABLE: recently confirmed
-# STALE: was reachable, not recently confirmed but still valid
-# DELAY: transitioning from STALE, probe sent
-# PROBE: actively probing
 ARP_PRESENT_STATES = {"REACHABLE", "STALE", "DELAY", "PROBE"}
 
 
@@ -117,9 +120,43 @@ def detect_presence_single(ip: str, mac: str) -> tuple[bool, str]:
     return False, "none"
 
 
-def detect_presence_ping() -> dict[str, tuple[bool, str]]:
+def detect_via_zyxel() -> dict[str, tuple[bool, str]] | None:
     """
-    Check device presence using ping with ARP fallback.
+    Detect presence via Zyxel router API.
+
+    Returns:
+        Dict of device_id -> (is_present, "router") or None if failed
+    """
+    if not settings.zyxel.enabled:
+        return None
+
+    try:
+        config = ZyxelConfig(
+            router_ip=settings.zyxel.router_ip,
+            username=settings.zyxel.username,
+            password=settings.zyxel.password,
+            timeout=settings.zyxel.timeout,
+        )
+
+        mac_addresses = {
+            device_id: device.mac for device_id, device in settings.devices.items()
+        }
+
+        results = check_device_presence(config, mac_addresses)
+
+        return {
+            device_id: (is_present, "router" if is_present else "none")
+            for device_id, is_present in results.items()
+        }
+
+    except (OSError, ValueError, KeyError) as e:
+        logger.warning(f"Zyxel detection failed: {e}")
+        return None
+
+
+def detect_via_ping_arp() -> dict[str, tuple[bool, str]]:
+    """
+    Detect presence via ping with ARP fallback.
 
     Returns:
         Dict of device_id -> (is_present, detection_method)
@@ -128,6 +165,41 @@ def detect_presence_ping() -> dict[str, tuple[bool, str]]:
         device_id: detect_presence_single(device.ip, device.mac)
         for device_id, device in settings.devices.items()
     }
+
+
+def detect_presence() -> dict[str, tuple[bool, str]]:
+    """
+    Detect presence using all available methods.
+
+    Priority: Zyxel router API > Ping > ARP
+
+    Returns:
+        Dict of device_id -> (is_present, detection_method)
+    """
+    # Try Zyxel router first (most reliable)
+    zyxel_results = detect_via_zyxel()
+    if zyxel_results is not None:
+        # For any device not detected by router, try ping/ARP as fallback
+        ping_results = detect_via_ping_arp()
+
+        combined: dict[str, tuple[bool, str]] = {}
+        for device_id in settings.devices:
+            zyxel_present, _zyxel_method = zyxel_results.get(device_id, (False, "none"))
+            ping_present, ping_method = ping_results.get(device_id, (False, "none"))
+
+            # Use router result if present, otherwise use ping/ARP result
+            if zyxel_present:
+                combined[device_id] = (True, "router")
+            elif ping_present:
+                combined[device_id] = (True, ping_method)
+            else:
+                combined[device_id] = (False, "none")
+
+        return combined
+
+    # Zyxel failed, use ping/ARP only
+    logger.debug("Using ping/ARP detection (Zyxel unavailable)")
+    return detect_via_ping_arp()
 
 
 async def run_scan() -> dict[str, bool]:
@@ -142,8 +214,8 @@ async def run_scan() -> dict[str, bool]:
         for device_id in settings.devices
     }
 
-    logger.info("Running ping scan...")
-    presence_results = await asyncio.to_thread(detect_presence_ping)
+    logger.info("Running presence scan...")
+    presence_results = await asyncio.to_thread(detect_presence)
 
     # Extract just the presence bool for main logic
     presence: dict[str, bool] = {
@@ -169,8 +241,8 @@ async def run_scan() -> dict[str, bool]:
         logger.info(f"Waiting {settings.debounce_delay}s for confirmation...")
         await asyncio.sleep(settings.debounce_delay)
 
-        logger.info("Running confirmation ping scan...")
-        confirm_results = await asyncio.to_thread(detect_presence_ping)
+        logger.info("Running confirmation scan...")
+        confirm_results = await asyncio.to_thread(detect_presence)
 
         for device_id, expected_present, transition in needs_confirmation:
             confirmed, method = confirm_results[device_id]

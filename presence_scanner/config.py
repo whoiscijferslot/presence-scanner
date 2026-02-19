@@ -13,6 +13,16 @@ class DeviceConfig(BaseModel):
     mac: str
 
 
+class ZyxelConfig(BaseModel):
+    """Zyxel router configuration for presence detection."""
+
+    enabled: bool = True
+    router_ip: str = "192.168.1.1"
+    username: str = "admin"
+    password: str = "ZYXEL_PASSWORD_REDACTED"  # noqa: S105
+    timeout: int = 10
+
+
 class Settings(BaseModel):
     """Application settings."""
 
@@ -37,6 +47,9 @@ class Settings(BaseModel):
             mac="aa:bb:cc:dd:ee:02",
         ),
     }
+
+    # Zyxel router API (most reliable detection method)
+    zyxel: ZyxelConfig = ZyxelConfig()
 
     # Hue integration
     hue_bridge_ip: str = "192.168.1.103"
