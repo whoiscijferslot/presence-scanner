@@ -1,9 +1,9 @@
-"""Network scanning using Zyxel router API, ping, and ARP fallback.
+"""Network scanning using ping, ARP, and Zyxel router API fallback.
 
 Detection priority:
-1. Zyxel Router API - Most reliable, tracks all connected devices
-2. ICMP Ping - Fast, works when device is awake
-3. ARP Cache - Fallback for sleeping iPhones that don't respond to ping
+1. ICMP Ping - Fastest, works when device is awake
+2. ARP Cache - Fallback for sleeping iPhones that don't respond to ping
+3. Zyxel Router API - Most reliable but slowest (requires login + encryption)
 """
 
 import asyncio
@@ -171,35 +171,29 @@ def detect_presence() -> dict[str, tuple[bool, str]]:
     """
     Detect presence using all available methods.
 
-    Priority: Zyxel router API > Ping > ARP
+    Priority: Ping > ARP > Zyxel router API
 
     Returns:
         Dict of device_id -> (is_present, detection_method)
     """
-    # Try Zyxel router first (most reliable)
-    zyxel_results = detect_via_zyxel()
-    if zyxel_results is not None:
-        # For any device not detected by router, try ping/ARP as fallback
-        ping_results = detect_via_ping_arp()
+    # Try ping/ARP first (fastest)
+    results = detect_via_ping_arp()
 
-        combined: dict[str, tuple[bool, str]] = {}
-        for device_id in settings.devices:
-            zyxel_present, _zyxel_method = zyxel_results.get(device_id, (False, "none"))
-            ping_present, ping_method = ping_results.get(device_id, (False, "none"))
+    # Check if any device wasn't detected - try router API as fallback
+    undetected = [
+        device_id for device_id, (present, _) in results.items() if not present
+    ]
 
-            # Use router result if present, otherwise use ping/ARP result
-            if zyxel_present:
-                combined[device_id] = (True, "router")
-            elif ping_present:
-                combined[device_id] = (True, ping_method)
-            else:
-                combined[device_id] = (False, "none")
+    if undetected:
+        # Try Zyxel router for undetected devices
+        zyxel_results = detect_via_zyxel()
+        if zyxel_results is not None:
+            for device_id in undetected:
+                zyxel_present, _ = zyxel_results.get(device_id, (False, "none"))
+                if zyxel_present:
+                    results[device_id] = (True, "router")
 
-        return combined
-
-    # Zyxel failed, use ping/ARP only
-    logger.debug("Using ping/ARP detection (Zyxel unavailable)")
-    return detect_via_ping_arp()
+    return results
 
 
 async def run_scan() -> dict[str, bool]:
