@@ -1,6 +1,7 @@
-"""Network scanning using ping and nmap."""
+"""Network scanning using ping with ARP fallback."""
 
 import asyncio
+import re
 import subprocess
 from datetime import UTC, datetime
 
@@ -12,6 +13,14 @@ from .models import DeviceState
 
 # Full paths for security
 PING_PATH = "/usr/bin/ping"
+IP_PATH = "/usr/sbin/ip"
+
+# ARP neighbor states that indicate presence
+# REACHABLE: recently confirmed
+# STALE: was reachable, not recently confirmed but still valid
+# DELAY: transitioning from STALE, probe sent
+# PROBE: actively probing
+ARP_PRESENT_STATES = {"REACHABLE", "STALE", "DELAY", "PROBE"}
 
 
 def ping_host(ip: str) -> bool:
@@ -36,26 +45,87 @@ def ping_host(ip: str) -> bool:
         return result.returncode == 0
 
 
-def run_ping_scan(ips: list[str]) -> dict[str, bool]:
+def check_arp_cache(ip: str, expected_mac: str) -> bool:
     """
-    Ping multiple IPs using standard ICMP ping.
+    Check if device is present in ARP cache with matching MAC.
 
-    Returns dict of ip -> is_present.
-    More reliable for iPhones than nmap ICMP probes.
+    This works even when iPhones don't respond to ICMP ping because:
+    - The ping attempt triggers ARP resolution
+    - iPhones MUST respond to ARP to maintain their IP lease
+    - The wifi chip handles ARP at hardware level even in deep sleep
+
+    Args:
+        ip: IP address to check
+        expected_mac: Expected MAC address (lowercase, colon-separated)
+
+    Returns:
+        True if device is in ARP cache with matching MAC and valid state
     """
-    if not ips:
-        return {}
+    try:
+        result = subprocess.run(  # noqa: S603
+            [IP_PATH, "neigh", "show", ip],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError) as e:
+        logger.warning(f"ARP check failed for {ip}: {e}")
+        return False
 
-    return {ip: ping_host(ip) for ip in ips}
+    output = result.stdout.strip()
+    if not output:
+        return False
+
+    # Check for FAILED or INCOMPLETE states (device not present)
+    if any(absent_state in output for absent_state in ("FAILED", "INCOMPLETE")):
+        return False
+
+    # Extract and verify MAC address
+    mac_match = re.search(r"lladdr\s+([0-9a-f:]+)", output.lower())
+    if not mac_match:
+        return False
+
+    found_mac = mac_match.group(1)
+    if found_mac != expected_mac.lower():
+        logger.debug(f"MAC mismatch for {ip}: expected {expected_mac}, got {found_mac}")
+        return False
+
+    # Check state is one of the "present" states
+    return any(state in output for state in ARP_PRESENT_STATES)
 
 
-def detect_presence_ping() -> dict[str, bool]:
-    """Check device presence using standard ICMP ping (reliable for iPhones)."""
-    ips = [device.ip for device in settings.devices.values()]
-    ip_results = run_ping_scan(ips)
+def detect_presence_single(ip: str, mac: str) -> tuple[bool, str]:
+    """
+    Detect presence for a single device using ping + ARP fallback.
 
+    Args:
+        ip: Device IP address
+        mac: Device MAC address
+
+    Returns:
+        Tuple of (is_present, detection_method)
+    """
+    # First try ICMP ping
+    if ping_host(ip):
+        return True, "ping"
+
+    # Ping failed - check ARP cache (ping attempt triggers ARP resolution)
+    if check_arp_cache(ip, mac):
+        return True, "arp"
+
+    return False, "none"
+
+
+def detect_presence_ping() -> dict[str, tuple[bool, str]]:
+    """
+    Check device presence using ping with ARP fallback.
+
+    Returns:
+        Dict of device_id -> (is_present, detection_method)
+    """
     return {
-        device_id: ip_results.get(device.ip, False)
+        device_id: detect_presence_single(device.ip, device.mac)
         for device_id, device in settings.devices.items()
     }
 
@@ -73,11 +143,17 @@ async def run_scan() -> dict[str, bool]:
     }
 
     logger.info("Running ping scan...")
-    presence = await asyncio.to_thread(detect_presence_ping)
+    presence_results = await asyncio.to_thread(detect_presence_ping)
 
-    for device_id, is_present in presence.items():
-        status = "responds" if is_present else "no response"
-        logger.debug(f"  {settings.devices[device_id].name}: {status}")
+    # Extract just the presence bool for main logic
+    presence: dict[str, bool] = {
+        device_id: result[0] for device_id, result in presence_results.items()
+    }
+
+    for device_id, (is_present, method) in presence_results.items():
+        device_name = settings.devices[device_id].name
+        status = f"responds ({method})" if is_present else "no response"
+        logger.debug(f"  {device_name}: {status}")
 
     needs_confirmation: list[tuple[str, bool, str]] = []
     for device_id, is_present in presence.items():
@@ -94,13 +170,14 @@ async def run_scan() -> dict[str, bool]:
         await asyncio.sleep(settings.debounce_delay)
 
         logger.info("Running confirmation ping scan...")
-        confirm_presence = await asyncio.to_thread(detect_presence_ping)
+        confirm_results = await asyncio.to_thread(detect_presence_ping)
 
         for device_id, expected_present, transition in needs_confirmation:
-            confirmed = confirm_presence[device_id]
+            confirmed, method = confirm_results[device_id]
             device_name = settings.devices[device_id].name
             if confirmed == expected_present:
-                logger.info(f"  {device_name} {transition} CONFIRMED")
+                method_str = f" via {method}" if confirmed else ""
+                logger.info(f"  {device_name} {transition} CONFIRMED{method_str}")
                 presence[device_id] = expected_present
             else:
                 prev_present = previous_state[device_id].present
