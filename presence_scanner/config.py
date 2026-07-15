@@ -1,4 +1,11 @@
-"""Configuration for presence scanner."""
+"""Configuration for presence scanner.
+
+The host running this app is *not* on the home LAN anymore. All information is
+obtained remotely through two endpoints exposed on the router's WAN IP:
+
+1. The Zyxel router API (HTTPS) -- connected devices + live ARP table.
+2. The Philips Hue bridge HTTP API, port-forwarded on the router.
+"""
 
 from pathlib import Path
 
@@ -14,13 +21,27 @@ class DeviceConfig(BaseModel):
 
 
 class ZyxelConfig(BaseModel):
-    """Zyxel router configuration for presence detection."""
+    """Zyxel router API configuration (remote, over the WAN IP)."""
 
     enabled: bool = True
-    router_ip: str = "192.168.1.1"
+    base_url: str = "https://203.0.113.1"
     username: str = "admin"
     password: str = "ZYXEL_PASSWORD_REDACTED"  # noqa: S105
-    timeout: int = 10
+    timeout: int = 15
+
+
+class HueConfig(BaseModel):
+    """Philips Hue bridge configuration (port-forwarded on the router).
+
+    The bridge lives at 192.168.1.103 on the LAN and is exposed on the router's
+    WAN IP at port 25875, so the v1 API base is ``http://<wan-ip>:25875``.
+    """
+
+    base_url: str = "http://203.0.113.1:25875"
+    username: str = "HUE_USERNAME_REDACTED"
+    living_room_group: str = "81"
+    valou_room_group: str = "84"
+    timeout: int = 5
 
 
 class Settings(BaseModel):
@@ -30,11 +51,10 @@ class Settings(BaseModel):
     data_dir: Path = Path("/var/lib/presence-scanner")
     db_file: Path = Path("/var/lib/presence-scanner/presence.db")
 
-    # Network
-    network: str = "192.168.1.0/24"
-    debounce_delay: int = 5  # seconds to wait before confirmation scan
+    # Debounce before confirming a presence state change
+    debounce_delay: int = 5
 
-    # Devices to track
+    # Devices to track (MAC addresses are the source of truth for presence)
     devices: dict[str, DeviceConfig] = {
         "alex": DeviceConfig(
             name="Alex",
@@ -48,14 +68,9 @@ class Settings(BaseModel):
         ),
     }
 
-    # Zyxel router API (most reliable detection method)
+    # Remote data sources
     zyxel: ZyxelConfig = ZyxelConfig()
-
-    # Hue integration
-    hue_bridge_ip: str = "192.168.1.103"
-    hue_tokens_file: Path = Path("/home/sam1902/.config/bedwolf/hue-tokens.json")
-    living_room_group: str = "81"
-    valou_room_group: str = "84"
+    hue: HueConfig = HueConfig()
 
     # Scan interval (seconds)
     scan_interval: int = 60

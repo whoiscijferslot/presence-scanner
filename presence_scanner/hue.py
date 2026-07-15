@@ -1,6 +1,9 @@
-"""Philips Hue integration service."""
+"""Philips Hue integration service.
 
-import json
+The bridge is reached over its v1 HTTP API, which is port-forwarded on the
+router's WAN IP (see :class:`presence_scanner.config.HueConfig`).
+"""
+
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Literal, Protocol
@@ -36,11 +39,11 @@ class HueClientProtocol(Protocol):
 
 
 class HueClient:
-    """Client for Philips Hue API."""
+    """Client for the Philips Hue v1 HTTP API."""
 
-    def __init__(self, bridge_ip: str, username: str | None) -> None:
-        """Initialize Hue client."""
-        self.bridge_ip = bridge_ip
+    def __init__(self, base_url: str, username: str | None) -> None:
+        """Initialize Hue client with the (port-forwarded) API base URL."""
+        self.base_url = base_url.rstrip("/")
         self.username = username
 
     async def get_room_state(self, group_id: str) -> bool:
@@ -51,8 +54,8 @@ class HueClient:
         try:
             async with httpx.AsyncClient() as client:
                 response = await client.get(
-                    f"http://{self.bridge_ip}/api/{self.username}/groups/{group_id}",
-                    timeout=5.0,
+                    f"{self.base_url}/api/{self.username}/groups/{group_id}",
+                    timeout=settings.hue.timeout,
                 )
                 data = response.json()
                 return bool(data.get("state", {}).get("any_on", False))
@@ -67,17 +70,6 @@ class HueService:
     def __init__(self, client: HueClientProtocol) -> None:
         """Initialize Hue service with client."""
         self.client = client
-
-    @staticmethod
-    def load_hue_username() -> str | None:
-        """Load Hue API username from config file."""
-        try:
-            with settings.hue_tokens_file.open() as f:
-                data = json.load(f)
-                return str(data.get("username")) if data.get("username") else None
-        except (FileNotFoundError, json.JSONDecodeError) as e:
-            logger.debug(f"Could not load Hue tokens: {e}")
-            return None
 
     @staticmethod
     def determine_status(status_input: StatusInput) -> tuple[ValouStatus, str]:
@@ -105,8 +97,10 @@ class HueService:
 
     async def get_room_states(self) -> RoomStates:
         """Get living room and Roomie room light states."""
-        living_room_on = await self.client.get_room_state(settings.living_room_group)
-        valou_room_on = await self.client.get_room_state(settings.valou_room_group)
+        living_room_on = await self.client.get_room_state(
+            settings.hue.living_room_group
+        )
+        valou_room_on = await self.client.get_room_state(settings.hue.valou_room_group)
         return RoomStates(living_room_on=living_room_on, valou_room_on=valou_room_on)
 
     async def get_enhanced_valou_status(
@@ -173,6 +167,5 @@ class HueService:
 
 def get_hue_service() -> HueService:
     """Factory function to create HueService with configured client."""
-    username = HueService.load_hue_username()
-    client = HueClient(settings.hue_bridge_ip, username)
+    client = HueClient(settings.hue.base_url, settings.hue.username)
     return HueService(client)

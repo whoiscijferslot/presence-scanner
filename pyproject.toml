@@ -10,7 +10,8 @@ dependencies = [
     "httpx>=0.28.0",
     "loguru>=0.7.0",
     "pydantic>=2.0.0",
-    "pycryptodome>=3.20.0",
+    "requests>=2.32.0",
+    "cryptography>=43.0.0",
 ]
 
 [project.scripts]
@@ -42,6 +43,8 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]
+# Standalone, uv-runnable client script moved into the package verbatim.
+"zyxel_client.py" = ["T201"]
 
 [tool.ty.environment]
 python-version = "3.12"
