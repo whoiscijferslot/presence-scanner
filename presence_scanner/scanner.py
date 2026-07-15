@@ -21,23 +21,42 @@ from .config import settings
 from .database import DeviceUpdate, get_device_state, update_device_state
 from .models import DeviceState
 from .zyxel_client import Zyxel, ZyxelError
+from .zyxel_session import fresh_login, get_session
 
-# Exceptions that mean "could not reach / parse the router" (transient).
-_ROUTER_ERRORS = (ZyxelError, requests.RequestException, ValueError, KeyError, OSError)
+# Exceptions that mean "could not reach / parse the router" (transient), which
+# also covers talking to the router with a stale/expired cached session.
+_ROUTER_ERRORS = (
+    ZyxelError,
+    requests.RequestException,
+    ValueError,
+    KeyError,
+    IndexError,
+    OSError,
+)
 
 
-def _present_macs() -> dict[str, str]:
-    """Query the router and return ``{mac_lower: method}`` for present devices."""
-    zyxel = Zyxel(base_url=settings.zyxel.base_url)
-    zyxel.login(settings.zyxel.username, settings.zyxel.password)
+def _arp_ipv4_macs(zyxel: Zyxel) -> set[str]:
+    """Lowercased MACs currently in the router's IPv4 ARP table.
 
-    macs: dict[str, str] = {}
-    for host in zyxel.lan_hosts():
-        if host.active:
-            macs[host.mac.lower()] = "lanhosts"
-    for entry in zyxel.arp_table().ipv4:
-        macs.setdefault(entry.mac.lower(), "arp")
-    return macs
+    IPv4 only, on purpose: IPv6 neighbour entries linger for a long time after
+    a device leaves, and the ``lanhosts`` ``Active`` flag follows the DHCP lease
+    rather than live connectivity. The IPv4 ARP table ages out promptly, so it
+    is the reliable signal for "is this device actually on the network now".
+    """
+    return {entry.mac.lower() for entry in zyxel.arp_table().ipv4}
+
+
+def _present_macs() -> set[str]:
+    """Present MACs from the IPv4 ARP table, reusing the cached session.
+
+    If the cached session is stale (or the query otherwise fails), log in fresh
+    once and retry; a second failure propagates to the caller.
+    """
+    try:
+        return _arp_ipv4_macs(get_session())
+    except _ROUTER_ERRORS as exc:
+        logger.info(f"Zyxel query failed ({exc}); retrying with a fresh login")
+        return _arp_ipv4_macs(fresh_login())
 
 
 def detect_presence() -> dict[str, tuple[bool, str]] | None:
@@ -58,8 +77,8 @@ def detect_presence() -> dict[str, tuple[bool, str]] | None:
 
     results: dict[str, tuple[bool, str]] = {}
     for device_id, device in settings.devices.items():
-        method = present.get(device.mac.lower())
-        results[device_id] = (method is not None, method or "none")
+        is_present = device.mac.lower() in present
+        results[device_id] = (is_present, "arp" if is_present else "none")
     return results
 
 

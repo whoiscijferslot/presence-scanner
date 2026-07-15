@@ -23,6 +23,22 @@ class DeviceUpdate:
     scan_time: str
 
 
+@dataclass
+class ZyxelSessionRecord:
+    """A cached Zyxel router session (reused until it expires, ~60 min).
+
+    Reusing a session avoids exhausting the router's small pool of concurrent
+    login slots. All three values are needed to talk to the router without a
+    fresh login: ``cookie`` authenticates, ``aes_key`` decrypts responses, and
+    ``session_key`` is the CSRF token for any state-changing call.
+    """
+
+    cookie: str
+    aes_key: str
+    session_key: str
+    created_at: str  # ISO-8601, UTC
+
+
 def get_connection() -> sqlite3.Connection:
     """Get a database connection with row factory."""
     settings.data_dir.mkdir(parents=True, exist_ok=True)
@@ -61,6 +77,15 @@ def init_db() -> None:
                 id INTEGER PRIMARY KEY CHECK (id = 1),
                 status TEXT,
                 since TEXT
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS zyxel_session (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                cookie TEXT NOT NULL,
+                aes_key TEXT NOT NULL,
+                session_key TEXT NOT NULL,
+                created_at TEXT NOT NULL
             )
         """)
         conn.execute("""
@@ -191,6 +216,57 @@ def save_valou_status_history(status: str, since: str) -> None:
             """,
             (status, since),
         )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_zyxel_session() -> ZyxelSessionRecord | None:
+    """Load the cached Zyxel session, or None if none is stored."""
+    conn = get_connection()
+    try:
+        row = conn.execute(
+            "SELECT cookie, aes_key, session_key, created_at "
+            "FROM zyxel_session WHERE id = 1",
+        ).fetchone()
+        if row:
+            return ZyxelSessionRecord(
+                cookie=row["cookie"],
+                aes_key=row["aes_key"],
+                session_key=row["session_key"],
+                created_at=row["created_at"],
+            )
+        return None
+    finally:
+        conn.close()
+
+
+def save_zyxel_session(record: ZyxelSessionRecord) -> None:
+    """Persist (replace) the cached Zyxel session."""
+    conn = get_connection()
+    try:
+        conn.execute(
+            """
+            INSERT INTO zyxel_session (id, cookie, aes_key, session_key, created_at)
+            VALUES (1, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                cookie = excluded.cookie,
+                aes_key = excluded.aes_key,
+                session_key = excluded.session_key,
+                created_at = excluded.created_at
+            """,
+            (record.cookie, record.aes_key, record.session_key, record.created_at),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def clear_zyxel_session() -> None:
+    """Drop the cached Zyxel session (forces a fresh login next time)."""
+    conn = get_connection()
+    try:
+        conn.execute("DELETE FROM zyxel_session WHERE id = 1")
         conn.commit()
     finally:
         conn.close()

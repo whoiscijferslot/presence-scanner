@@ -33,6 +33,7 @@ Lint/format with strict Ruff::
 from __future__ import annotations
 
 import base64
+import contextlib
 import json
 import os
 
@@ -47,6 +48,7 @@ from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 BASE_URL = os.environ.get("ZYXEL_URL", "https://203.0.113.1")
+SESSION_COOKIE = "Session"  # cookie the router sets on login
 USERNAME = "admin"
 PASSWORD = "ZYXEL_PASSWORD_REDACTED"  # noqa: S105 -- router creds, per request
 HTTP_TIMEOUT = 30
@@ -191,6 +193,40 @@ class Zyxel:
             raise ZyxelError(msg)
         self.sessionkey = result.sessionkey
         return result
+
+    def export_session(self) -> tuple[str, str, str]:
+        """Return ``(cookie, aes_key_b64, session_key)`` for reuse/persistence.
+
+        These three values are everything needed to resume this session later
+        without logging in again (until the router expires it, ~60 min).
+        """
+        cookie = self.session.cookies.get(SESSION_COOKIE)
+        if cookie is None or self.sessionkey is None:
+            msg = "no active session to export"
+            raise ZyxelError(msg)
+        return cookie, self._key_b64, self.sessionkey
+
+    def restore_session(
+        self,
+        *,
+        cookie: str,
+        aes_key_b64: str,
+        session_key: str,
+    ) -> None:
+        """Resume a previously exported session (skips the login handshake)."""
+        self._key_b64 = aes_key_b64
+        self._key = base64.b64decode(aes_key_b64)
+        self.sessionkey = session_key
+        self.session.cookies.set(SESSION_COOKIE, cookie)
+
+    def logout(self) -> None:
+        """Best-effort logout to free the router's login slot (never raises)."""
+        with contextlib.suppress(requests.RequestException):
+            self.session.get(
+                self.base_url + "/cgi-bin/UserLogout",
+                headers={"CSRFToken": self.sessionkey or ""},
+                timeout=HTTP_TIMEOUT,
+            )
 
     def lan_hosts(self) -> list[LanHost]:
         """Return the connected LAN hosts (hostname, IP, MAC, lease info)."""

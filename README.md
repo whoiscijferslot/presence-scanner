@@ -10,9 +10,13 @@ presence status.
 Two data sources, both remote:
 
 1. **Zyxel router API** (HTTPS, `zyxel_client.py`) — the sole presence source.
-   A device counts as present if its MAC is an **active LAN host** or appears in
-   the router's **live ARP table**. No ping / ARP / nmap on the host itself
-   (it's off-LAN), so this is authoritative.
+   A device counts as present if its MAC is in the router's **live IPv4 ARP
+   table**. IPv6 neighbour entries (which linger long after a device leaves) and
+   the `lanhosts` `Active` flag (which follows the DHCP lease) are deliberately
+   ignored. No ping / ARP / nmap on the host itself (it's off-LAN).
+   The router allows few concurrent logins, so the session is cached in the DB
+   and reused for ~60 minutes (`zyxel_session.py`) rather than re-logging in
+   every scan.
 2. **Philips Hue bridge** (v1 HTTP API, port-forwarded on the router) — enriches
    Roomie's status from room-light state (Downstairs / Around / Awake / Sleeping /
    Away). Optional: if the bridge is unreachable, status degrades gracefully.
