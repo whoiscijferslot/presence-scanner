@@ -4,6 +4,7 @@ The bridge is reached over its v1 HTTP API, which is port-forwarded on the
 router's WAN IP (see :class:`presence_scanner.config.HueConfig`).
 """
 
+import asyncio
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Literal, Protocol
@@ -96,11 +97,15 @@ class HueService:
         return "sleeping", "Sleeping"
 
     async def get_room_states(self) -> RoomStates:
-        """Get living room and Roomie room light states."""
-        living_room_on = await self.client.get_room_state(
-            settings.hue.living_room_group
+        """Get living room and Roomie room light states (queried concurrently).
+
+        Running both requests together means an unreachable bridge costs one
+        timeout, not two, keeping ``/api/status`` responsive when Hue is down.
+        """
+        living_room_on, valou_room_on = await asyncio.gather(
+            self.client.get_room_state(settings.hue.living_room_group),
+            self.client.get_room_state(settings.hue.valou_room_group),
         )
-        valou_room_on = await self.client.get_room_state(settings.hue.valou_room_group)
         return RoomStates(living_room_on=living_room_on, valou_room_on=valou_room_on)
 
     async def get_enhanced_valou_status(
