@@ -2,12 +2,30 @@
 
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from loguru import logger
 
 from .config import settings
 from .models import DeviceData, DeviceState, PresenceData, ValouStatusHistory
+
+DISPLAY_TZ = ZoneInfo("Europe/Amsterdam")
+_WEEKDAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+_MONTHS = (
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
+)
 
 
 @dataclass
@@ -272,12 +290,38 @@ def clear_zyxel_session() -> None:
         conn.close()
 
 
+def _ordinal_suffix(day: int) -> str:
+    """Return the English ordinal suffix for a day of the month (st/nd/rd/th)."""
+    if 11 <= day % 100 <= 13:  # noqa: PLR2004 -- 11th/12th/13th are all "th"
+        return "th"
+    return {1: "st", 2: "nd", 3: "rd"}.get(day % 10, "th")
+
+
+def _utc_offset_label(dt: datetime) -> str:
+    """Format a datetime's UTC offset as e.g. ``UTC+2`` or ``UTC+5:30``."""
+    offset = dt.utcoffset() or timedelta(0)
+    total_minutes = int(offset.total_seconds()) // 60
+    sign = "+" if total_minutes >= 0 else "-"
+    hours, minutes = divmod(abs(total_minutes), 60)
+    return f"UTC{sign}{hours}" if minutes == 0 else f"UTC{sign}{hours}:{minutes:02d}"
+
+
 def format_time_human(iso_time: str | None) -> str | None:
-    """Convert ISO time to human readable format."""
+    """Format a UTC ISO timestamp for display in Amsterdam local time.
+
+    Example: ``Tue 26th June 19:53:12 UTC+2`` — abbreviated weekday, ordinal
+    day, full month, 24-hour time, and the local UTC offset.
+    """
     if not iso_time:
         return None
     try:
         dt = datetime.fromisoformat(iso_time)
-        return dt.strftime("%Y-%m-%d %H:%M:%S UTC")
     except ValueError:
         return iso_time
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=UTC)
+    local = dt.astimezone(DISPLAY_TZ)
+    weekday = _WEEKDAYS[local.weekday()]
+    day = f"{local.day}{_ordinal_suffix(local.day)}"
+    month = _MONTHS[local.month - 1]
+    return f"{weekday} {day} {month} {local:%H:%M:%S} {_utc_offset_label(local)}"
