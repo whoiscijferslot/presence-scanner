@@ -47,7 +47,7 @@ from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-BASE_URL = os.environ.get("ZYXEL_URL", "https://203.0.113.1")
+BASE_URL = os.environ.get("ZYXEL_URL", "https://homerouter.example.com")
 SESSION_COOKIE = "Session"  # cookie the router sets on login
 USERNAME = "admin"
 PASSWORD = "ZYXEL_PASSWORD_REDACTED"  # noqa: S105 -- router creds, per request

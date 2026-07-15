@@ -35,7 +35,7 @@ the Zyxel EX5601-T1. It implements the router's RSA+AES login handshake and
 exposes `lan_hosts()` and `arp_table()`. It can be run standalone for debugging:
 
 ```bash
-ZYXEL_URL=https://203.0.113.1 ./presence_scanner/zyxel_client.py
+ZYXEL_URL=https://homerouter.example.com ./presence_scanner/zyxel_client.py
 ```
 
 ## Configuration

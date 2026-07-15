@@ -24,7 +24,7 @@ class ZyxelConfig(BaseModel):
     """Zyxel router API configuration (remote, over the WAN IP)."""
 
     enabled: bool = True
-    base_url: str = "https://203.0.113.1"
+    base_url: str = "https://homerouter.example.com"
     username: str = "admin"
     password: str = "ZYXEL_PASSWORD_REDACTED"  # noqa: S105
     timeout: int = 15
@@ -37,7 +37,7 @@ class HueConfig(BaseModel):
     WAN IP at port 25875, so the v1 API base is ``http://<wan-ip>:25875``.
     """
 
-    base_url: str = "http://203.0.113.1:25875"
+    base_url: str = "http://homerouter.example.com:25875"
     username: str = "HUE_USERNAME_REDACTED"
     living_room_group: str = "81"
     valou_room_group: str = "84"
