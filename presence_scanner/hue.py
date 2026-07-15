@@ -13,7 +13,7 @@ import httpx
 from loguru import logger
 
 from .config import settings
-from .database import get_valou_status_history, save_valou_status_history
+from .database import DISPLAY_TZ, get_valou_status_history, save_valou_status_history
 from .models import EnhancedValouData, RoomStates
 
 ValouStatus = Literal["downstairs", "around", "awake", "sleeping", "away"]
@@ -154,7 +154,7 @@ class HueService:
             try:
                 since_dt = datetime.fromisoformat(since)
                 since_minutes = round((now - since_dt).total_seconds() / 60)
-                since_human = since_dt.strftime("%H:%M")
+                since_human = since_dt.astimezone(DISPLAY_TZ).strftime("%H:%M")
             except ValueError:
                 pass
 
