@@ -16,23 +16,26 @@ from fastapi.staticfiles import StaticFiles
 from loguru import logger
 
 from .config import settings
-from .database import get_all_device_states, init_db
-from .hue import HueService, get_hue_service
+from .database import get_all_device_states, get_recent_new_devices, init_db
+from .hue import get_hue_service
 from .models import (
     DeviceStatus,
+    EnhancedDeviceStatus,
     HealthResponse,
+    NewDeviceEvent,
     PresenceResponse,
     ScanTriggerResponse,
-    ValouEnhancedStatus,
-    ValouStatusResponse,
 )
+from .new_device_monitor import run_new_device_watch
 from .scanner import run_scan
 
 TRIGGER_DEBOUNCE = 5
+NEW_DEVICE_WATCH_RESTART_DELAY = 10
 
 # Module-level state
 _last_trigger_time: float = 0.0
 _scanner_task: asyncio.Task[None] | None = None
+_new_device_task: asyncio.Task[None] | None = None
 
 
 async def background_scanner() -> None:
@@ -48,10 +51,27 @@ async def background_scanner() -> None:
         await asyncio.sleep(settings.scan_interval)
 
 
+async def background_new_device_watch() -> None:
+    """Background task that watches for devices never seen before.
+
+    ``run_new_device_watch`` already loops (and tolerates transient router
+    errors) forever by itself; this wrapper only restarts it, after a short
+    delay, if it ever exits due to an unexpected error.
+    """
+    while True:
+        try:
+            await run_new_device_watch()
+        except asyncio.CancelledError:
+            raise
+        except (OSError, RuntimeError, ValueError):
+            logger.exception("New-device watch crashed; restarting")
+            await asyncio.sleep(NEW_DEVICE_WATCH_RESTART_DELAY)
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     """Startup and shutdown events."""
-    global _scanner_task  # noqa: PLW0603
+    global _scanner_task, _new_device_task  # noqa: PLW0603
 
     init_db()
     logger.info("Database initialized")
@@ -59,12 +79,19 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     _scanner_task = asyncio.create_task(background_scanner())
     logger.info(f"Background scanner started (interval: {settings.scan_interval}s)")
 
+    _new_device_task = asyncio.create_task(background_new_device_watch())
+    logger.info(
+        "New-device watch started "
+        f"(interval: {settings.new_device_poll_interval}s)",
+    )
+
     yield
 
-    if _scanner_task:
-        _scanner_task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await _scanner_task
+    for task in (_scanner_task, _new_device_task):
+        if task:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
     logger.info("Scanner stopped")
 
 
@@ -97,57 +124,27 @@ async def trigger_scan(background_tasks: BackgroundTasks) -> ScanTriggerResponse
     return ScanTriggerResponse(status="triggered")
 
 
-@app.get("/api/roomie-status")
-async def valou_status(
-    hue_service: Annotated[HueService, Depends(get_hue_service)],
-) -> ValouStatusResponse:
-    """Get enhanced Roomie status based on presence + room lights."""
-    presence_data = get_all_device_states()
-
-    roomie = presence_data.devices.get("roomie")
-    if not roomie:
-        raise HTTPException(status_code=500, detail="Roomie data missing")
-
-    enhanced = await hue_service.get_enhanced_valou_status(
-        is_present=roomie.present,
-        last_online=roomie.last_online,
-    )
-
-    return ValouStatusResponse(
-        status=enhanced.enhanced_status,
-        label=enhanced.enhanced_label,
-        present=roomie.present,
-        last_online=roomie.last_online,
-        minutes_away=enhanced.minutes_away,
-        living_room_on=enhanced.living_room_on,
-        valou_room_on=enhanced.valou_room_on,
-        since=enhanced.since,
-        since_minutes=enhanced.since_minutes,
-        since_human=enhanced.since_human,
-    )
-
-
 @app.get("/api/status")
-async def full_status(
-    hue_service: Annotated[HueService, Depends(get_hue_service)],
-) -> PresenceResponse:
-    """Get full presence status for all devices + enhanced Roomie status."""
+async def full_status() -> PresenceResponse:
+    """Get full presence status for all devices.
+
+    The device configured via ``HUE_ENHANCED_DEVICE_ID`` (if any, and if it's
+    actually being tracked) gets an additional light-based enhanced status;
+    every other device gets plain presence status.
+    """
     presence_data = get_all_device_states()
+    hue_service = get_hue_service()
+    enhanced_device_id = settings.hue.enhanced_device_id
 
-    roomie = presence_data.devices.get("roomie")
-    if not roomie:
-        raise HTTPException(status_code=500, detail="Roomie data missing")
-
-    enhanced = await hue_service.get_enhanced_valou_status(
-        is_present=roomie.present,
-        last_online=roomie.last_online,
-    )
-
-    devices: dict[str, DeviceStatus | ValouEnhancedStatus] = {}
+    devices: dict[str, DeviceStatus | EnhancedDeviceStatus] = {}
 
     for device_id, device_data in presence_data.devices.items():
-        if device_id == "roomie":
-            devices[device_id] = ValouEnhancedStatus(
+        if device_id == enhanced_device_id and enhanced_device_id:
+            enhanced = await hue_service.get_enhanced_status(
+                is_present=device_data.present,
+                last_online=device_data.last_online,
+            )
+            devices[device_id] = EnhancedDeviceStatus(
                 name=device_data.name,
                 present=device_data.present,
                 last_online=device_data.last_online,
@@ -155,7 +152,7 @@ async def full_status(
                 enhanced_status=enhanced.enhanced_status,
                 enhanced_label=enhanced.enhanced_label,
                 living_room_on=enhanced.living_room_on,
-                valou_room_on=enhanced.valou_room_on,
+                secondary_room_on=enhanced.secondary_room_on,
                 since=enhanced.since,
                 since_minutes=enhanced.since_minutes,
                 since_human=enhanced.since_human,
@@ -182,6 +179,12 @@ async def health() -> HealthResponse:
         status="ok",
         timestamp=datetime.now(UTC).isoformat(),
     )
+
+
+@app.get("/api/new-devices")
+async def new_devices(limit: int = 50) -> list[NewDeviceEvent]:
+    """Devices never seen before this monitor recorded them, newest first."""
+    return get_recent_new_devices(limit)
 
 
 STATIC_DIR = Path(__file__).parent.parent / "static"

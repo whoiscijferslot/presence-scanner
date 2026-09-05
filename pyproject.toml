@@ -17,6 +17,7 @@ dependencies = [
 
 [project.scripts]
 presence-scanner = "presence_scanner.app:main"
+presence-watch-new-devices = "presence_scanner.new_device_monitor:main"
 
 [build-system]
 requires = ["hatchling"]

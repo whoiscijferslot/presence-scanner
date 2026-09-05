@@ -18,3 +18,12 @@ build/
 
 # Database (runtime state)
 presence.db
+
+# Local secrets (never commit real credentials)
+.envrc
+.env
+.env.*
+!.env.example
+
+# macOS
+.DS_Store

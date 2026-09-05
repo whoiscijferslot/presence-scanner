@@ -47,10 +47,14 @@ from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-BASE_URL = os.environ.get("ZYXEL_URL", "https://homerouter.example.com")
+# No credentials or hostnames are hardcoded here. Set ZYXEL_URL / ZYXEL_USER /
+# ZYXEL_PASS in the environment (see ../.envrc.example). PASSWORD has no
+# default on purpose -- a missing password should fail loudly, not silently
+# fall back to someone else's router credentials.
+BASE_URL = os.environ.get("ZYXEL_URL", "https://192.168.1.1")
 SESSION_COOKIE = "Session"  # cookie the router sets on login
-USERNAME = "admin"
-PASSWORD = "ZYXEL_PASSWORD_REDACTED"  # noqa: S105 -- router creds, per request
+USERNAME = os.environ.get("ZYXEL_USER", "admin")
+PASSWORD = os.environ.get("ZYXEL_PASS", "")  # noqa: S105
 HTTP_TIMEOUT = 30
 AES_BLOCK_BITS = 128
 IV_BYTES = 16

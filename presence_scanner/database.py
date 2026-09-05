@@ -8,7 +8,13 @@ from zoneinfo import ZoneInfo
 from loguru import logger
 
 from .config import settings
-from .models import DeviceData, DeviceState, PresenceData, ValouStatusHistory
+from .models import (
+    DeviceData,
+    DeviceState,
+    EnhancedStatusHistory,
+    NewDeviceEvent,
+    PresenceData,
+)
 
 DISPLAY_TZ = ZoneInfo("Europe/Amsterdam")
 _WEEKDAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
@@ -91,7 +97,7 @@ def init_db() -> None:
             )
         """)
         conn.execute("""
-            CREATE TABLE IF NOT EXISTS valou_status (
+            CREATE TABLE IF NOT EXISTS enhanced_status (
                 id INTEGER PRIMARY KEY CHECK (id = 1),
                 status TEXT,
                 since TEXT
@@ -104,6 +110,16 @@ def init_db() -> None:
                 aes_key TEXT NOT NULL,
                 session_key TEXT NOT NULL,
                 created_at TEXT NOT NULL
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS known_devices (
+                mac TEXT PRIMARY KEY,
+                ip TEXT NOT NULL,
+                name TEXT NOT NULL,
+                connection TEXT NOT NULL,
+                first_seen TEXT NOT NULL,
+                last_seen TEXT NOT NULL
             )
         """)
         conn.execute("""
@@ -143,16 +159,30 @@ def get_device_state(device_id: str) -> DeviceState | None:
 
 
 def get_all_device_states() -> PresenceData:
-    """Get current state of all devices."""
+    """Get current state of all *currently configured* devices.
+
+    Filtered against ``settings.devices`` so a device that's been removed or
+    renamed in config (e.g. ``DEVICES`` changed) stops appearing in API
+    responses immediately, instead of lingering forever just because old rows
+    still exist in the database.
+    """
+    configured_ids = list(settings.devices.keys())
+    if not configured_ids:
+        return PresenceData(scan_time=None, scan_time_human=None, devices={})
+
     conn = get_connection()
     try:
+        placeholders = ",".join("?" for _ in configured_ids)
         row = conn.execute(
-            "SELECT MAX(updated_at) as scan_time FROM devices"
+            f"SELECT MAX(updated_at) as scan_time FROM devices "
+            f"WHERE device_id IN ({placeholders})",
+            configured_ids,
         ).fetchone()
         scan_time: str | None = row["scan_time"] if row else None
 
         devices: dict[str, DeviceData] = {}
-        for row in conn.execute("SELECT * FROM devices"):
+        query = f"SELECT * FROM devices WHERE device_id IN ({placeholders})"
+        for row in conn.execute(query, configured_ids):
             device_id: str = row["device_id"]
             devices[device_id] = DeviceData(
                 name=row["name"],
@@ -207,27 +237,27 @@ def update_device_state(update: DeviceUpdate) -> None:
         conn.close()
 
 
-def get_valou_status_history() -> ValouStatusHistory:
-    """Get the last known Roomie status."""
+def get_enhanced_status_history() -> EnhancedStatusHistory:
+    """Get the last known enhanced (light-based) status."""
     conn = get_connection()
     try:
         row = conn.execute(
-            "SELECT status, since FROM valou_status WHERE id = 1"
+            "SELECT status, since FROM enhanced_status WHERE id = 1"
         ).fetchone()
         if row:
-            return ValouStatusHistory(status=row["status"], since=row["since"])
-        return ValouStatusHistory(status=None, since=None)
+            return EnhancedStatusHistory(status=row["status"], since=row["since"])
+        return EnhancedStatusHistory(status=None, since=None)
     finally:
         conn.close()
 
 
-def save_valou_status_history(status: str, since: str) -> None:
-    """Save the current Roomie status."""
+def save_enhanced_status_history(status: str, since: str) -> None:
+    """Save the current enhanced (light-based) status."""
     conn = get_connection()
     try:
         conn.execute(
             """
-            INSERT INTO valou_status (id, status, since) VALUES (1, ?, ?)
+            INSERT INTO enhanced_status (id, status, since) VALUES (1, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 status = excluded.status,
                 since = excluded.since
@@ -286,6 +316,87 @@ def clear_zyxel_session() -> None:
     try:
         conn.execute("DELETE FROM zyxel_session WHERE id = 1")
         conn.commit()
+    finally:
+        conn.close()
+
+
+def get_known_macs() -> set[str]:
+    """Every MAC address ever recorded as an active device (lowercased).
+
+    This is scoped to devices seen by the new-device monitor -- it is *not*
+    the same as the router's own DHCP-lease history, which can predate this
+    feature entirely.
+    """
+    conn = get_connection()
+    try:
+        rows = conn.execute("SELECT mac FROM known_devices").fetchall()
+        return {row["mac"] for row in rows}
+    finally:
+        conn.close()
+
+
+def record_seen_device(
+    *,
+    mac: str,
+    ip: str,
+    name: str,
+    connection: str,
+    seen_time: str,
+) -> bool:
+    """Record that ``mac`` was seen active at ``seen_time``.
+
+    Returns ``True`` if this MAC has never been recorded before, i.e. it is
+    a genuinely new device connecting for the first time since this monitor
+    started running.
+    """
+    mac = mac.lower()
+    conn = get_connection()
+    try:
+        existing = conn.execute(
+            "SELECT 1 FROM known_devices WHERE mac = ?",
+            (mac,),
+        ).fetchone()
+        conn.execute(
+            """
+            INSERT INTO known_devices
+                (mac, ip, name, connection, first_seen, last_seen)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(mac) DO UPDATE SET
+                ip = excluded.ip,
+                name = excluded.name,
+                connection = excluded.connection,
+                last_seen = excluded.last_seen
+            """,
+            (mac, ip, name, connection, seen_time, seen_time),
+        )
+        conn.commit()
+        return existing is None
+    finally:
+        conn.close()
+
+
+def get_recent_new_devices(limit: int = 50) -> list[NewDeviceEvent]:
+    """Most recently first-seen devices, newest first."""
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            "SELECT mac, ip, name, connection, first_seen, last_seen "
+            "FROM known_devices ORDER BY first_seen DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [
+            NewDeviceEvent(
+                mac=row["mac"],
+                ip=row["ip"],
+                name=row["name"],
+                connection=row["connection"],
+                first_seen=row["first_seen"],
+                first_seen_human=format_time_human(row["first_seen"]),
+                last_seen=row["last_seen"],
+                last_seen_human=format_time_human(row["last_seen"]),
+            )
+            for row in rows
+        ]
     finally:
         conn.close()
 

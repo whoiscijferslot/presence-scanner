@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Presence Scanner // example.com</title>
+    <title>Presence Scanner</title>
     
     <!-- Favicons (relative paths for proxy compatibility) -->
     <link rel="icon" type="image/svg+xml" href="static/favicon.svg">
@@ -414,7 +414,7 @@
             </div>
             
             <footer>
-                [ PRESENCE SCANNER v2.0 // example.com ]
+                [ PRESENCE SCANNER v2.0 ]
             </footer>
         </div>
     </div>
@@ -425,8 +425,8 @@
             offline: '○ OFFLINE — Device not found'
         };
 
-        // Enhanced Roomie status config
-        const valouStatusConfig = {
+        // Enhanced presence status config (room-light based)
+        const enhancedStatusConfig = {
             downstairs: { label: 'Downstairs', color: '#00ff00', icon: '🏠' },
             around: { label: 'Around', color: '#fbbf24', icon: '🔄' },
             awake: { label: 'Awake', color: '#fbbf24', icon: '👀' },
@@ -473,13 +473,13 @@
                 <div class="status-grid">
             `;
 
-            for (const [key, device] of Object.entries(devices)) {
+            for (const device of Object.values(devices)) {
                 const isOnline = device.present;
                 const icon = '📱';
                 
-                // Check for enhanced Roomie status
-                if (key === 'roomie' && device.enhanced_status) {
-                    const config = valouStatusConfig[device.enhanced_status] || valouStatusConfig.away;
+                // Check for enhanced (light-based) status, if this device has one
+                if (device.enhanced_status) {
+                    const config = enhancedStatusConfig[device.enhanced_status] || enhancedStatusConfig.away;
                     const statusClass = device.enhanced_status === 'away' ? 'offline' : 
                                        (device.enhanced_status === 'sleeping' ? 'sleeping' : 'online');
                     
@@ -498,8 +498,8 @@
                     let roomInfo = '';
                     if (device.living_room_on !== undefined) {
                         const livingIcon = device.living_room_on ? '💡' : '⚫';
-                        const valouIcon = device.valou_room_on ? '💡' : '⚫';
-                        roomInfo = `<div class="room-lights">Living: ${livingIcon} | Roomie: ${valouIcon}</div>`;
+                        const secondaryIcon = device.secondary_room_on ? '💡' : '⚫';
+                        roomInfo = `<div class="room-lights">Living: ${livingIcon} | Other room: ${secondaryIcon}</div>`;
                     }
                     
                     html += `
@@ -516,7 +516,7 @@
                         </div>
                     `;
                 } else {
-                    // Standard display for Alex or fallback
+                    // Standard display for devices without enhanced status
                     const statusClass = isOnline ? 'online' : 'offline';
                     const statusText = isOnline ? statusLabels.online : statusLabels.offline;
                     const lastSeenHtml = formatLastSeen(device.last_online_human, isOnline);

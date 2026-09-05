@@ -13,10 +13,14 @@ import httpx
 from loguru import logger
 
 from .config import settings
-from .database import DISPLAY_TZ, get_valou_status_history, save_valou_status_history
-from .models import EnhancedValouData, RoomStates
+from .database import (
+    DISPLAY_TZ,
+    get_enhanced_status_history,
+    save_enhanced_status_history,
+)
+from .models import EnhancedPresenceData, RoomStates
 
-ValouStatus = Literal["downstairs", "around", "awake", "sleeping", "away"]
+PresenceStatus = Literal["downstairs", "around", "awake", "sleeping", "away"]
 
 # Threshold for considering someone "effectively home" even if not detected
 EFFECTIVELY_HOME_MINUTES = 5
@@ -65,6 +69,51 @@ class HueClient:
             return False
 
 
+# Hours (in DISPLAY_TZ) each simulated room's lights are "on", used only by
+# MockHueClient. Chosen to cycle through every enhanced status once a day:
+# sleeping (0-5) -> awake (6-7) -> downstairs (8-18) -> around (19-22)
+# -> awake (23) -> sleeping (0...).
+_MOCK_LIVING_ON_HOURS = frozenset(range(8, 23))
+_MOCK_SECONDARY_ON_HOURS = frozenset({6, 7, 19, 20, 21, 22, 23})
+
+
+class MockHueClient:
+    """Deterministic, time-of-day simulated Hue client.
+
+    Lets the enhanced-status feature (and its Downstairs / Around / Awake /
+    Sleeping / Away states) be exercised and demonstrated without any real
+    smart lights. Selected automatically when ``HUE_USERNAME`` is unset, or
+    explicitly via ``HUE_BACKEND=mock`` (see ``.env.example``).
+    """
+
+    def __init__(
+        self,
+        *,
+        living_room_group: str,
+        secondary_room_group: str,
+        force_hour: int | None = None,
+    ) -> None:
+        """Initialize with the configured group IDs, used to tell rooms apart."""
+        self._living_room_group = living_room_group
+        self._secondary_room_group = secondary_room_group
+        self._force_hour = force_hour
+
+    def _hour(self) -> int:
+        """Return the simulated hour-of-day (forced, or the current time)."""
+        if self._force_hour is not None:
+            return self._force_hour
+        return datetime.now(DISPLAY_TZ).hour
+
+    async def get_room_state(self, group_id: str) -> bool:
+        """Return a simulated on/off state for the given room group."""
+        hour = self._hour()
+        if group_id == self._living_room_group:
+            return hour in _MOCK_LIVING_ON_HOURS
+        if group_id == self._secondary_room_group:
+            return hour in _MOCK_SECONDARY_ON_HOURS
+        return False
+
+
 class HueService:
     """Service for Hue-based presence detection."""
 
@@ -73,9 +122,9 @@ class HueService:
         self.client = client
 
     @staticmethod
-    def determine_status(status_input: StatusInput) -> tuple[ValouStatus, str]:
+    def determine_status(status_input: StatusInput) -> tuple[PresenceStatus, str]:
         """
-        Determine Roomie's status based on presence and room lights.
+        Determine the tracked user's status based on presence and room lights.
 
         Returns (status, label) tuple.
         """
@@ -84,37 +133,40 @@ class HueService:
             or status_input.minutes_away < EFFECTIVELY_HOME_MINUTES
         )
         living_on = status_input.room_states.living_room_on
-        valou_on = status_input.room_states.valou_room_on
+        secondary_on = status_input.room_states.secondary_room_on
 
         if not is_effectively_home:
             return "away", "Away"
-        if living_on and not valou_on:
+        if living_on and not secondary_on:
             return "downstairs", "Downstairs"
-        if living_on and valou_on:
+        if living_on and secondary_on:
             return "around", "Around"
-        if not living_on and valou_on:
+        if not living_on and secondary_on:
             return "awake", "Awake"
         return "sleeping", "Sleeping"
 
     async def get_room_states(self) -> RoomStates:
-        """Get living room and Roomie room light states (queried concurrently).
+        """Get living room and secondary room light states (queried concurrently).
 
         Running both requests together means an unreachable bridge costs one
         timeout, not two, keeping ``/api/status`` responsive when Hue is down.
         """
-        living_room_on, valou_room_on = await asyncio.gather(
+        living_room_on, secondary_room_on = await asyncio.gather(
             self.client.get_room_state(settings.hue.living_room_group),
-            self.client.get_room_state(settings.hue.valou_room_group),
+            self.client.get_room_state(settings.hue.secondary_room_group),
         )
-        return RoomStates(living_room_on=living_room_on, valou_room_on=valou_room_on)
+        return RoomStates(
+            living_room_on=living_room_on,
+            secondary_room_on=secondary_room_on,
+        )
 
-    async def get_enhanced_valou_status(
+    async def get_enhanced_status(
         self,
         *,
         is_present: bool,
         last_online: str | None,
-    ) -> EnhancedValouData:
-        """Get enhanced Roomie status with room light info."""
+    ) -> EnhancedPresenceData:
+        """Get the enhanced (room-light-based) status for the tracked device."""
         # Calculate minutes away
         minutes_away = float("inf")
         if last_online:
@@ -138,12 +190,12 @@ class HueService:
         status, label = self.determine_status(status_input)
 
         # Track status changes
-        history = get_valou_status_history()
+        history = get_enhanced_status_history()
 
         since: str | None
         if history.status != status:
             since = now.isoformat().replace("+00:00", "Z")
-            save_valou_status_history(status, since)
+            save_enhanced_status_history(status, since)
         else:
             since = history.since
 
@@ -158,11 +210,11 @@ class HueService:
             except ValueError:
                 pass
 
-        return EnhancedValouData(
+        return EnhancedPresenceData(
             enhanced_status=status,
             enhanced_label=label,
             living_room_on=room_states.living_room_on,
-            valou_room_on=room_states.valou_room_on,
+            secondary_room_on=room_states.secondary_room_on,
             since=since,
             since_minutes=since_minutes,
             since_human=since_human,
@@ -171,6 +223,14 @@ class HueService:
 
 
 def get_hue_service() -> HueService:
-    """Factory function to create HueService with configured client."""
-    client = HueClient(settings.hue.base_url, settings.hue.username)
+    """Factory function to create HueService with the configured backend."""
+    client: HueClientProtocol
+    if settings.hue.backend == "mock":
+        client = MockHueClient(
+            living_room_group=settings.hue.living_room_group,
+            secondary_room_group=settings.hue.secondary_room_group,
+            force_hour=settings.hue.mock_force_hour,
+        )
+    else:
+        client = HueClient(settings.hue.base_url, settings.hue.username)
     return HueService(client)
