@@ -1,4 +1,4 @@
-# POC-F: CVE-2026-6952 Lab Proof-of-Concept
+# POC: CVE-2026-6952 Lab Proof-of-Concept
 
 Lab-validated exploitation chain for Zyxel EX5601-T1 post-auth LogServer command injection.
 
@@ -36,7 +36,7 @@ The lab mock (`homelab/mock_zyxel_vuln_6952.py`) and PoC resolve credentials wit
 2. `$LAB_USER` / `$LAB_PASS` environment variables, then
 3. demo defaults `admin` / `LabPass#2026`.
 
-POC-F **never reads `ZYXEL_USER` / `ZYXEL_PASS`** — it only ever talks to the local mock, never to the router. Copy `.env.example` to `.env` if you want to pin the lab credentials explicitly.
+POC **never reads `ZYXEL_USER` / `ZYXEL_PASS`** — it only ever talks to the local mock, never to the router. Copy `.env.example` to `.env` if you want to pin the lab credentials explicitly.
 
 ---
 
@@ -84,7 +84,7 @@ Raw evidence is git-ignored; operator-reviewed `*.public.jsonl` sanitized copies
 
 ## Notes
 
-- POC-F is fully offline: the mock listens on `127.0.0.1:8812`, and the PoC refuses to run against anything but loopback by default (use `--allow-nonlocal` ONLY for a container/VM interface holding your own mock).
-- POC-F exists in two variants: the committed lab PoC in this repo (mock-only) and the Mac-only `poc_f_logserver_rce.py` live-target variant, which is intentionally **not** in this repo.
-- POC-F evidence: raw `pocF_cve_2026_6952_lab_*.jsonl` are git-ignored; the sanitized `*.public.jsonl` copies are the committable, publish-ready artifacts.
+- POC is fully offline: the mock listens on `127.0.0.1:8812`, and the PoC refuses to run against anything but loopback by default (use `--allow-nonlocal` ONLY for a container/VM interface holding your own mock).
+- POC exists in two variants: the committed lab PoC in this repo (mock-only) and the Mac-only `poc_f_logserver_rce.py` live-target variant, which is intentionally **not** in this repo.
+- POC evidence: raw `pocF_cve_2026_6952_lab_*.jsonl` are git-ignored; the sanitized `*.public.jsonl` copies are the committable, publish-ready artifacts.
 - Disposable local artifacts to delete when back on the Mac: `/tmp/presence-scanner/poc_probe_nl.txt` (if it exists).
