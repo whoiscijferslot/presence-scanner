@@ -27,7 +27,7 @@ This report exists because the repository it lives in is not just a router explo
 
 That design is exactly what makes CVE-2026-6952 dangerous beyond "RCE on a router": compromise the router and you do not merely own one appliance — you own the **data source the sensor trusts**. Poison the LAN host / ARP tables and the scanner silently reports "nobody home" while automation flips to AWAY mode. The attacker turns off the **observation**, not the house — no alarm fires because nothing looks wrong.
 
-Full project walkthrough (threat model, defense guidance, deployment): [`README.md` §1 — The presence-scanner project](README.md#1-the-presence-scanner-project).
+Full project walkthrough (threat model, defense guidance, deployment): [`README.md` 1. — The presence-scanner project](README.md#1-the-presence-scanner-project).
 
 ---
 
