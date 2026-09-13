@@ -36,20 +36,6 @@ attacker can poison the ARP/LAN tables this very scanner polls: every service
 that trusts the result — lights, locks, security system — flips to "nobody
 home" while the router keeps routing traffic as if nothing happened.
 
----
-
-### Why this matters
-
-None of this requires a security background — just five minutes in your router's
-admin panel. The two things that matter most:
-
-- **As a device owner:** Turn on rotating/randomized Wi-Fi MAC addressing
-  (iOS: *Settings > Wi-Fi > (i) > Private Wi-Fi Address > Rotating*; Android:
-  *Wi-Fi > network > Privacy > Use randomized MAC*). A rotating MAC breaks the
-  assumption that "this MAC = this person, forever."
-- **As a router admin:** Disable remote/WAN admin access. Put it behind a VPN
-  into the LAN rather than exposing the admin panel directly.
-
 The full threat model, a longer defense checklist for both sides, and how to
 spot things like an unrecognized device quietly sitting on your LAN — all in
 the sections below.
@@ -139,8 +125,9 @@ threat here.
 
 ### Why this works
 
-Nothing here is a router or Hue "exploit." It only works because of how home
-networks are typically configured by default:
+Nothing here is a router or Hue “exploit,” or requires a security background — 
+just five minutes in your router’s admin panel. It only works because of how 
+home networks are typically configured by default:
 
 - **Router admin credentials are shared and rarely rotated.** Whoever knows
   the admin login can query the live ARP table (or LAN host list) for every
