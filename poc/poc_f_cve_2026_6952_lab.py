@@ -6,7 +6,7 @@
 #     "cryptography==47.0.0",
 # ]
 # ///
-"""POC-F (LAB): CVE-2026-6952 post-auth LogServer command injection on the mock.
+"""POC (LAB): CVE-2026-6952 post-auth LogServer command injection on the mock.
 
 Reconstructed live-chain lab PoC matching the original ``poc_f_cve_2026_6952_lab.py``:
 
