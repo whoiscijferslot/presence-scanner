@@ -203,9 +203,6 @@ This commit adds the CVE-2026-6952 research on top of the existing presence-scan
 ### Evidence
 - `poc/evidence/pocF_cve_2026_6952_lab_*.public.jsonl` — 9 sanitized evidence files
 
-### LinkedIn Post
-- `poc/LINKEDIN_CVE_2026_6952_EXPLOIT_CHAIN.md` — the exploitation chain post
-
 ### Deliberately NOT committed
 - `poc/archive/` — F1-F5 POCs (session replay, slot exhaustion, Hue probe, login storm, WAN edge), kept locally for reference
 - `poc/evidence/*.jsonl` (raw) — unsanitized, git-ignored
