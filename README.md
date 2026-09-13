@@ -82,7 +82,7 @@ without consent.
 
 - [1. The presence-scanner project](#1-the-presence-scanner-project)
 - [2. Security research: CVE-2026-6952](#2-security-research-cve-2026-6952)
-- [License](#license)
+- [3. License](#license)
 
 ---
 
