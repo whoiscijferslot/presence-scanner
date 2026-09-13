@@ -1,109 +1,92 @@
-# Presence Scanner
+# Presence Scanner — Tracking People, Inferring Sleep, and the Router That Knows Too Much
 
-Remote network-presence detection for home automation, plus the lab-validated
-security research on the key device it depends on.
+**No exploits. No malware. Just a router password someone already has — and
+that's enough to track where you are and when you sleep.**
 
-The host running this service is **not** on the home LAN — it reaches the
-network entirely through two endpoints exposed on the router's WAN IP, and
-provides an API for querying presence status.
+Someone I know built exactly this to spy on a roommate — Wi-Fi presence
+tracking plus sleep/wake inference from smart-light activity. With my own
+roommate's full knowledge and consent, I rebuilt it as a clean proof-of-concept,
+scrubbed every credential and identifier, and I'm sharing it — not as a how-to,
+but to show how little it takes to build, and how little it takes to defend
+against.
 
-This repository also contains a **deterministic, lab-validated exploitation
-chain for CVE-2026-6952** (post-auth command injection in the Zyxel EX5601-T1
-LogServer/DAL endpoint): admin credentials → root RCE → LAN presence-sensor
-defeat → home-network takeover.
+---
+
+### What this actually does
+
+**1. Tracks people on the network.** The router's admin panel exposes every
+connected device's MAC address — no packet sniffing required. Most phones keep
+a stable MAC address on "trusted" networks, turning it into a long-term
+identifier for a specific person, not just a device. This service polls the
+router's **live IPv4 ARP table** remotely (from outside the LAN) and logs
+when each tracked MAC appears or disappears.
+
+**2. Infers sleep/wake from smart lights.** Combine Wi-Fi presence with
+Philips Hue bridge data (lights on/off per room) and you get a surprisingly
+detailed picture of someone's daily routine — Downstairs / Around / Awake /
+Sleeping / Away — from credentials a housemate, ex-partner, or landlord may
+already have.
+
+**3. The router is the single point of failure.** This repository also
+documents [CVE-2026-6952](#2-security-research-cve-2026-6952), a post-auth
+command injection in the Zyxel EX5601-T1's LogServer/DAL endpoint. Validated
+in the lab as a deterministic chain: **admin credentials → root RCE → LAN
+presence-sensor defeat → home-network takeover**. Root on the router means the
+attacker can poison the ARP/LAN tables this very scanner polls: every service
+that trusts the result — lights, locks, security system — flips to "nobody
+home" while the router keeps routing traffic as if nothing happened.
+
+---
+
+### Why this matters
+
+None of this requires a security background — just five minutes in your router's
+admin panel. The two things that matter most:
+
+- **As a device owner:** Turn on rotating/randomized Wi-Fi MAC addressing
+  (iOS: *Settings > Wi-Fi > (i) > Private Wi-Fi Address > Rotating*; Android:
+  *Wi-Fi > network > Privacy > Use randomized MAC*). A rotating MAC breaks the
+  assumption that "this MAC = this person, forever."
+- **As a router admin:** Disable remote/WAN admin access. Put it behind a VPN
+  into the LAN rather than exposing the admin panel directly.
+
+The full threat model, a longer defense checklist for both sides, and how to
+spot things like an unrecognized device quietly sitting on your LAN — all in
+the sections below.
+
+---
+
+### The two sides of this repository
+
+**§1 The presence-scanner project** — the full walkthrough: how it works,
+threat model, why this works, how to defend against this, configuration,
+deployment.
+
+**§2 Security research: CVE-2026-6952** — the lab-validated exploitation chain
+that turns router RCE into a LAN presence-sensor defeat and home-network
+takeover. The router *is* the source of truth for who is home — compromise it,
+and the scanner (and every other service that trusts it) lies to you.
+
+Read one, and you understand the other.
+
+**⚠️ To be unambiguous:** Monitoring another person's device presence or
+behavior without their knowledge or consent can be illegal (stalking,
+harassment, or computer-misuse statutes, depending on jurisdiction),
+independent of whether it's also a violation of trust. This project is
+published for awareness and defense, not as a how-to for tracking someone
+without consent.
+
+---
 
 ## Contents
 
-- [1. Security research: CVE-2026-6952](#1-security-research-cve-2026-6952)
-- [2. The presence-scanner project](#2-the-presence-scanner-project)
+- [1. The presence-scanner project](#1-the-presence-scanner-project)
+- [2. Security research: CVE-2026-6952](#2-security-research-cve-2026-6952)
 - [License](#license)
 
 ---
 
-## 1. Security research: CVE-2026-6952
-
-Lab-validated exploitation chain demonstrating **full router compromise** →
-**LAN presence sensor defeat** → **home network takeover**.
-
-### Quick start
-
-```bash
-# Clone and enter the repo
-git clone https://github.com/whoiscijferslot/presence-scanner
-cd presence-scanner
-
-# Start the mock (EX5601-T1 simulator on localhost:8812)
-uv run homelab/mock_zyxel_vuln_6952.py &
-
-# Run the PoC (dry-run first, then with --yes)
-uv run poc/poc_f_cve_2026_6952_lab.py              # dry-run: chain up to inject, then abort
-uv run poc/poc_f_cve_2026_6952_lab.py --yes        # execute: inject → RCE proof → restore
-```
-
-**Expected output:**
-
-```
-*** RCE CONFIRMED: id + uname -a + hostname captured from the sink ***
-```
-
-### The exploitation chain
-
-```
-GET /getRSAPublickKey → RSA+AES login via POST /UserLogin →
-read firmware version → if unpatched: inject into LogServer →
-command execution as root → full LAN pivot → presence sensor defeat
-```
-
-See [`REPORT.md`](REPORT.md) for the complete technical breakdown.
-
-### Lab credentials
-
-The mock and PoC read the **same** two environment variables so they stay in sync:
-
-```bash
-export LAB_USER=""   # demo default: admin
-export LAB_PASS=""   # demo default: LabPass#2026
-```
-
-Precedence: `--user`/`--pass` CLI flags > env > demo defaults. The PoC
-**never reads `ZYXEL_PASS`** — the real router password stays scoped to live
-targets.
-
-Placeholders: [`poc/.env.example`](poc/.env.example).
-
-### Dependencies
-
-- `uv` (PEP 723 inline script deps) or plain `python3` with packages from
-  [`poc/requirements.txt`](poc/requirements.txt)
-- Repo root must be importable (run the PoC from the repository root), because
-  the PoC imports `presence_scanner`
-
-### Evidence
-
-- Raw evidence: `poc/evidence/pocF_cve_2026_6952_lab_*.jsonl` (git-ignored)
-- Sanitized copies: `poc/evidence/pocF_cve_2026_6952_lab_*.public.jsonl`
-  (committable, publish-ready)
-
-Generate sanitized copies with the local helper script `sanitize_evidence.py`
-(operator-local, intentionally not committed):
-
-```bash
-python3 sanitize_evidence.py poc/evidence/pocF_cve_2026_6952_lab_<timestamp>.jsonl <personal-tokens...>
-```
-
-### LinkedIn post
-
-[`poc/LINKEDIN_CVE_2026_6952_EXPLOIT_CHAIN.md`](poc/LINKEDIN_CVE_2026_6952_EXPLOIT_CHAIN.md) —
-the exploitation-chain walkthrough formatted for social sharing.
-
-### Other proof-of-concepts (archived)
-
-F1–F5 POCs (session replay, slot exhaustion, Hue probe, login storm, WAN
-edge) are archived in [`poc/archive/`](poc/archive/) for reference.
-
----
-
-## 2. The presence-scanner project
+## 1. The presence-scanner project
 
 ### How it works
 
@@ -328,6 +311,94 @@ sudo nginx -t && sudo systemctl reload nginx
 The service runs as the `presence` user from `/opt/presence-scanner`, using
 `uv run` (deps from `uv.lock`), and stores state in
 `/var/lib/presence-scanner/presence.db`.
+
+---
+
+## 2. Security research: CVE-2026-6952
+
+This research builds on the presence scanner above: the router is the
+scanner's *source of truth* for who is home, so the post-auth command
+injection documented here turns router RCE into a LAN presence-sensor
+defeat and home-network takeover.
+
+Lab-validated exploitation chain demonstrating **full router compromise** →
+**LAN presence sensor defeat** → **home network takeover**.
+
+### Quick start
+
+```bash
+# Clone and enter the repo
+git clone https://github.com/whoiscijferslot/presence-scanner
+cd presence-scanner
+
+# Start the mock (EX5601-T1 simulator on localhost:8812)
+uv run homelab/mock_zyxel_vuln_6952.py &
+
+# Run the PoC (dry-run first, then with --yes)
+uv run poc/poc_f_cve_2026_6952_lab.py              # dry-run: chain up to inject, then abort
+uv run poc/poc_f_cve_2026_6952_lab.py --yes        # execute: inject → RCE proof → restore
+```
+
+**Expected output:**
+
+```
+*** RCE CONFIRMED: id + uname -a + hostname captured from the sink ***
+```
+
+### The exploitation chain
+
+```
+GET /getRSAPublickKey → RSA+AES login via POST /UserLogin →
+read firmware version → if unpatched: inject into LogServer →
+command execution as root → full LAN pivot → presence sensor defeat
+```
+
+See [`REPORT.md`](REPORT.md) for the complete technical breakdown.
+
+### Lab credentials
+
+The mock and PoC read the **same** two environment variables so they stay in sync:
+
+```bash
+export LAB_USER=""   # demo default: admin
+export LAB_PASS=""   # demo default: LabPass#2026
+```
+
+Precedence: `--user`/`--pass` CLI flags > env > demo defaults. The PoC
+**never reads `ZYXEL_PASS`** — the real router password stays scoped to live
+targets.
+
+Placeholders: [`poc/.env.example`](poc/.env.example).
+
+### Dependencies
+
+- `uv` (PEP 723 inline script deps) or plain `python3` with packages from
+  [`poc/requirements.txt`](poc/requirements.txt)
+- Repo root must be importable (run the PoC from the repository root), because
+  the PoC imports `presence_scanner`
+
+### Evidence
+
+- Raw evidence: `poc/evidence/pocF_cve_2026_6952_lab_*.jsonl` (git-ignored)
+- Sanitized copies: `poc/evidence/pocF_cve_2026_6952_lab_*.public.jsonl`
+  (committable, publish-ready)
+
+Generate sanitized copies with the local helper script `sanitize_evidence.py`
+(operator-local, intentionally not committed):
+
+```bash
+python3 sanitize_evidence.py poc/evidence/pocF_cve_2026_6952_lab_<timestamp>.jsonl <personal-tokens...>
+```
+
+### LinkedIn post
+
+[`poc/LINKEDIN_CVE_2026_6952_EXPLOIT_CHAIN.md`](poc/LINKEDIN_CVE_2026_6952_EXPLOIT_CHAIN.md) —
+the exploitation-chain walkthrough formatted for social sharing.
+
+### Other proof-of-concepts (archived)
+
+F1–F5 POCs (session replay, slot exhaustion, Hue probe, login storm, WAN
+edge) are archived in [`poc/archive/`](poc/archive/) for reference.
 
 ---
 
