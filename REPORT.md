@@ -56,7 +56,7 @@ A value such as `127.0.0.1"; id > /tmp/proof.txt; uname -a >> /tmp/proof.txt; #`
 - **Proof-file readback is a lab artifact.** The PoC's sink-based verification ("list proof files") exists only in the mock; a real EX5601-T1 has no such DAL object. On-device output must be exfiltrated out-of-band (HTTP/DNS beacon), which was not exercised against real firmware.
 - **Single-model validation.** The quote-break is validated on the EX5601-T1 build (`5.70(ACDZ.6)C0`). The advisory covers dozens of models across DSL CPE, Ethernet CPE, fiber ONT, and extender lines — quoting/interpolation likely differs per line, so each probably needs its own payload variant.
 - **Malformed-injection fallback risk.** Zyxel's documented config lifecycle rolls back to `startup-config-bad.conf`/`lastgood.conf` on parse errors; a truncated quote-break can disrupt the LogServer config rather than fail silently. The trailing `#` terminator mitigates this, but doesn't eliminate it — which is also why the chain restores the field afterward.
-- 
+
 ### What Makes This Chain Different From the Public PoC
 
 - **Live DAL API, not config import.** The public PoC requires downloading a config file, editing JSON, and re-uploading it. This chain is a **single encrypted POST** to the live DAL object (`oid=syslog`) through the RSA+AES-enveloped session — faster, stealthier, no file handling, no re-import.
