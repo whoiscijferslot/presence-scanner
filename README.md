@@ -44,11 +44,11 @@ the sections below.
 
 ### The two sides of this repository
 
-**§1 The presence-scanner project** — the full walkthrough: how it works,
+**1 The presence-scanner project** — the full walkthrough: how it works,
 threat model, why this works, how to defend against this, configuration,
 deployment.
 
-**§2 Security research: CVE-2026-6952** — the lab-validated exploitation chain
+**2 Security research: CVE-2026-6952** — the lab-validated exploitation chain
 that turns router RCE into a LAN presence-sensor defeat and home-network
 takeover. The router *is* the source of truth for who is home — compromise it,
 and the scanner (and every other service that trusts it) lies to you.
