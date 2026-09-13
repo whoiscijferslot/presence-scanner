@@ -54,7 +54,7 @@ A value such as `127.0.0.1"; id > /tmp/proof.txt; uname -a >> /tmp/proof.txt; #`
 
 - **Live DAL API, not config import.** The public PoC requires downloading a config file, editing JSON, and re-uploading it. This chain is a **single encrypted POST** to the live DAL object (`oid=syslog`) through the RSA+AES-enveloped session — faster, stealthier, no file handling, no re-import.
 - **POSIX shell quote-break, not Lua splice.** The documented public payload is `");program("...")` (Lua-style, targeting a config-import parser). This chain uses `127.0.0.1"; id > proof; #` (POSIX shell, targeting the live syslog-apply path). Two independent primitives for the same CVE: patching the import parser does **not** close the live API path.
-- **The chain, not just the primitive.** The documented PoCs stop at "RCE". This report traces RCE through the presence-sensor defeat and home-network takeover scenario (see §4).
+- **The chain, not just the primitive.** The documented PoCs stop at "RCE". This report traces RCE through the presence-sensor defeat and home-network takeover scenario (see 4).
 
 ---
 
@@ -187,7 +187,7 @@ This commit adds the CVE-2026-6952 research on top of the existing presence-scan
 
 ### Docs
 - `REPORT.md` — this document (lab report + project context)
-- `README.md` — combined repo overview: §1 full presence-scanner walkthrough + §2 CVE-2026-6952 research
+- `README.md` — combined repo overview: 1. full presence-scanner walkthrough + 2. CVE-2026-6952 research
 - `.env.example` — environment placeholders (repo root)
 
 ### Lab
