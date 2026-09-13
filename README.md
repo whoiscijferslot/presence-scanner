@@ -377,11 +377,6 @@ Generate sanitized copies with the local helper script `sanitize_evidence.py`
 python3 sanitize_evidence.py poc/evidence/pocF_cve_2026_6952_lab_<timestamp>.jsonl <personal-tokens...>
 ```
 
-### Other proof-of-concepts (archived)
-
-F1–F5 POCs (session replay, slot exhaustion, Hue probe, login storm, WAN
-edge) are archived in [`poc/archive/`](poc/archive/) for reference.
-
 ---
 
 ## License
