@@ -1,0 +1,7 @@
+# POC suite + homelab mock dependencies.
+# Floors mirror ../pyproject.toml; individual scripts pin exact versions in
+# their PEP 723 uv headers when run via `uv run poc/<script>.py`.
+requests>=2.32.0
+cryptography>=43.0.0
+pydantic>=2.0.0
+urllib3>=2.0.0

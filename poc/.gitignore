@@ -1,0 +1,12 @@
+# Live admin credential exports — never commit
+session_cache.json
+*.session.json
+
+# Probe evidence (may contain host-specific data)
+evidence/*
+# ... but operator-reviewed, sanitized public copies ARE publishable
+!evidence/*.public.jsonl
+
+# Bytecode
+__pycache__/
+*.pyc

