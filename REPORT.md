@@ -1,6 +1,6 @@
-# CVE-2026-6952: Zyxel EX5601-T1 Post-Auth LogServer Command Injection
+# CVE-2026-6952: Zyxel EX5601-T1 Post-Auth LogServer Command Injection (Lab Report)
 
-**Date:** 2026-09-12 · **Target:** Zyxel EX5601-T1 router (firmware ≤ 5.70(ACDZ.6)C0) · **Severity:** High (CWE-78)
+**Date:** 2026-09-12 · **Target:** Zyxel EX5601-T1 router (firmware ≤ 5.70(ACDZ.6)C0) · **Severity:** High (CWE-78) · **Repository:** [presence-scanner](https://github.com/whoiscijferslot/presence-scanner)
 
 ---
 
@@ -17,7 +17,21 @@ full LAN pivot → presence sensor defeat → home network takeover
 
 ---
 
-## 1. The Vulnerability
+## 1. Project Context
+
+This report exists because the repository it lives in is not just a router exploit — it is a **presence-scanner**: remote network-presence detection for home automation.
+
+- Presence is determined from the router's **live IPv4 ARP table** — the router is treated as the source of truth for "who is home".
+- Device status is optionally enriched from a **Hue bridge** on the same LAN (room-light state).
+- The service runs **off-LAN**, reaching both devices through endpoints exposed on the router's WAN IP.
+
+That design is exactly what makes CVE-2026-6952 dangerous beyond "RCE on a router": compromise the router and you do not merely own one appliance — you own the **data source the sensor trusts**. Poison the LAN host / ARP tables and the scanner silently reports "nobody home" while automation flips to AWAY mode. The attacker turns off the **observation**, not the house — no alarm fires because nothing looks wrong.
+
+Full project walkthrough (threat model, defense guidance, deployment): [`README.md` §2 — The presence-scanner project](README.md#2-the-presence-scanner-project).
+
+---
+
+## 2. The Vulnerability
 
 **CVE-2026-6952** (Zyxel advisory 2026-07-21): Post-authentication command injection in the syslog/`LogServer` configuration path of Zyxel CGI.
 
@@ -36,9 +50,15 @@ echo "LogServer=<VALUE>" >> /etc/syslog.conf
 
 A value such as `127.0.0.1"; id > /tmp/proof.txt; uname -a >> /tmp/proof.txt; #` breaks out of the quotes, executes arbitrary commands, and comments out the rest of the line. The AES-encrypted DAL transport and CSRF tokens do not stop the value from reaching the shell.
 
+### What Makes This Chain Different From the Public PoC
+
+- **Live DAL API, not config import.** The public PoC requires downloading a config file, editing JSON, and re-uploading it. This chain is a **single encrypted POST** to the live DAL object (`oid=syslog`) through the RSA+AES-enveloped session — faster, stealthier, no file handling, no re-import.
+- **POSIX shell quote-break, not Lua splice.** The documented public payload is `");program("...")` (Lua-style, targeting a config-import parser). This chain uses `127.0.0.1"; id > proof; #` (POSIX shell, targeting the live syslog-apply path). Two independent primitives for the same CVE: patching the import parser does **not** close the live API path.
+- **The chain, not just the primitive.** The documented PoCs stop at "RCE". This report traces RCE through the presence-sensor defeat and home-network takeover scenario (see §4).
+
 ---
 
-## 2. Exploitation Chain (Step-by-Step)
+## 3. Exploitation Chain (Step-by-Step)
 
 ### Step 1: RSA Public Key Fetch
 ```
@@ -104,7 +124,7 @@ Restore original `LogServer=""` to leave the router in a clean state.
 
 ---
 
-## 3. Impact Analysis
+## 4. Impact Analysis
 
 ### Immediate Impact
 - **Root shell** on the router
@@ -127,7 +147,7 @@ Restore original `LogServer=""` to leave the router in a clean state.
 
 ---
 
-## 4. Lab Validation
+## 5. Lab Validation
 
 **Mock:** `homelab/mock_zyxel_vuln_6952.py` (EX5601-T1 simulator, `http://127.0.0.1:8812`)
 
@@ -141,7 +161,7 @@ Restore original `LogServer=""` to leave the router in a clean state.
 
 ---
 
-## 5. Remediation
+## 6. Remediation
 
 ### Immediate (2026-09-12)
 1. **Upgrade firmware** to `5.70(ACDZ.6.1)C0` or later
@@ -157,16 +177,18 @@ Restore original `LogServer=""` to leave the router in a clean state.
 
 ### Long-term
 5. **Audit all DAL sinks** for similar `echo "field=<value>"` patterns with `shell=True`
-6. **Presence sensor redundancy** — don't trust a single data source for automation decisions
+6. **Presence sensor redundancy** — don't trust a single data source for automation decisions (this is a core design lesson of the same project that made the impact real)
 
 ---
 
-## 6. Files in This Commit
+## 7. Files in This Commit
 
-### Core
-- `REPORT.md` — this document
-- `README.md` — repo overview and run instructions
-- `pyproject.toml` — project metadata
+This commit adds the CVE-2026-6952 research on top of the existing presence-scanner project (commit `a9ce3cd`).
+
+### Docs
+- `REPORT.md` — this document (lab report + project context)
+- `README.md` — combined repo overview: §1 CVE-2026-6952 research + §2 full presence-scanner walkthrough
+- `.env.example` — environment placeholders (repo root)
 
 ### Lab
 - `homelab/mock_zyxel_vuln_6952.py` — EX5601-T1 mock (port 8812)
@@ -177,17 +199,23 @@ Restore original `LogServer=""` to leave the router in a clean state.
 - `poc/.env.example` — lab credential placeholders (`LAB_USER`/`LAB_PASS`)
 - `poc/requirements.txt` — dependencies
 - `poc/poc_f_cve_2026_6952_lab.py` — the CVE-2026-6952 lab PoC
+
+### Evidence
 - `poc/evidence/pocF_cve_2026_6952_lab_*.public.jsonl` — 9 sanitized evidence files
 
 ### LinkedIn Post
 - `poc/LINKEDIN_CVE_2026_6952_EXPLOIT_CHAIN.md` — the exploitation chain post
 
-### Archived (other POCs, kept for reference)
-- `poc/archive/` — F1-F5 POCs (session replay, slot exhaustion, Hue probe, login storm, WAN edge)
+### Deliberately NOT committed
+- `poc/archive/` — F1-F5 POCs (session replay, slot exhaustion, Hue probe, login storm, WAN edge), kept locally for reference
+- `poc/evidence/*.jsonl` (raw) — unsanitized, git-ignored
+- `poc_f_logserver_rce.py` — Mac-only live-target variant, stays out of the repo
+- `sanitize_evidence.py`, `.envrc`, `session_cache.json` — operator-local files
+- Local working-tree edits to `presence_scanner/` — not part of this research commit
 
 ---
 
-## 7. Appendix: The POSIX Shell Primitive
+## 8. Appendix: The POSIX Shell Primitive
 
 The vulnerability is **not** Zyxel-specific — it's a pattern:
 
